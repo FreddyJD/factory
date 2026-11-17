@@ -1,0 +1,108 @@
+name: Release Windows
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stable-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      GH_REPO: FreddyJD/factory
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@e9d7b9f1e587218970671bac74e5511ed9506e6a # v2
+        with:
+          workspaces: src-tauri -> target
+      - name: Require a main-branch commit and a new stable version
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor HEAD origin/main
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { execFileSync } from 'node:child_process';
+          const tag = process.env.GITHUB_REF_NAME;
+          assert.match(tag, /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/);
+          const releases = JSON.parse(execFileSync('gh', ['api', '--paginate', '--slurp', 'repos/FreddyJD/factory/releases?per_page=100'], { encoding: 'utf8' })).flat();
+          const same = releases.find(r => r.tag_name === tag);
+          assert.ok(!same || same.draft, 'A published release must never be replaced');
+          for (const release of releases.filter(r => !r.draft && !r.prerelease)) {
+            assert.match(release.tag_name, /^v\d+\.\d+\.\d+$/, 'Unexpected stable tag; review the update channel');
+            const next = tag.slice(1).split('.').map(Number);
+            const old = release.tag_name.slice(1).split('.').map(Number);
+            const different = next.findIndex((n, i) => n !== old[i]);
+            assert.ok(different >= 0 && next[different] > old[different], `Version must exceed ${release.tag_name}`);
+          }
+          JS
+      - run: npm ci
+      - run: npm run check
+      - run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+      - run: cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --locked --all-targets
+      - name: Require the updater signing key
+        shell: bash
+        env:
+          SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$SIGNING_KEY" ]; then
+            echo '::error::Configure the TAURI_SIGNING_PRIVATE_KEY repository secret first.'
+            exit 1
+          fi
+      - name: Build signed installer and draft release
+        id: build
+        uses: tauri-apps/tauri-action@944946e3e4cac6603d1fe8f514171e9ecd3c78aa # v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Git Factory ${{ github.ref_name }}
+          releaseBody: |
+            Windows x64 foundation release. Download the setup.exe installer below.
+
+            Signed in-app updates are enabled. Windows publisher signing is not configured yet, so SmartScreen may show a warning. GitHub sign-in and agent execution are not implemented in this foundation.
+          releaseDraft: true
+          prerelease: false
+          generateReleaseNotes: true
+          updaterJsonPreferNsis: true
+          uploadUpdaterSignatures: true
+          args: --bundles nsis -- --locked
+      - name: Verify release completeness
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ steps.build.outputs.releaseId }}
+        run: node scripts/verify-release.mjs
+      - name: Publish completed release to the update channel
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false --latest
+      - name: Show download location
+        shell: bash
+        env:
+          RELEASE_URL: ${{ steps.build.outputs.releaseHtmlUrl }}
+        run: echo "Download Git Factory at $RELEASE_URL" >> "$GITHUB_STEP_SUMMARY"

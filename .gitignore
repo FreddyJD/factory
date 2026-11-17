@@ -1,0 +1,10 @@
+.roxy/
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+.DS_Store
+*.key
+*.key.pub
+.env
+.env.*

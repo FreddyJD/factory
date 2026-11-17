@@ -1,0 +1,40 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Git Factory",
+  "version": "0.1.0",
+  "identifier": "com.freddyjd.gitfactory",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [{
+      "label": "main",
+      "title": "Git Factory",
+      "width": 1100,
+      "height": 760,
+      "minWidth": 600,
+      "minHeight": 520
+    }],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data:; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "windows": { "nsis": { "installMode": "currentUser" } }
+  },
+  "plugins": {
+    "updater": {
+      "requireSignedVersion": true,
+      "endpoints": ["https://github.com/FreddyJD/factory/releases/latest/download/latest.json"],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ1NjQ3QUNGNzUyQkU1NzQKUldSMDVTdDF6M3BrUmNyOTNaWEJvYUd1eE1NYVNoamxqNjNhdmRudktiWUtodXZRcENaYUhrNGoK",
+      "windows": { "installMode": "passive" }
+    }
+  }
+}

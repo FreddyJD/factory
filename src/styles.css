@@ -1,0 +1,48 @@
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #242a25;
+  background: #f4f3ef;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; }
+button { font: inherit; cursor: pointer; }
+button:focus-visible { outline: 3px solid #71896d; outline-offset: 5px; }
+.app-shell { min-height: 100dvh; display: flex; flex-direction: column; padding: 32px 48px; }
+header, footer { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.wordmark { display: flex; align-items: center; gap: 11px; font-size: 15px; font-weight: 650; letter-spacing: -.4px; }
+.mark { display: grid; place-items: center; width: 29px; height: 29px; background: #273f2e; color: #f4f3ef; font-family: Georgia, serif; font-size: 24px; }
+.release-label, .eyebrow, .section-index { font-family: "SFMono-Regular", Consolas, monospace; font-size: 10px; letter-spacing: 1.4px; }
+.release-label { color: #777d74; }
+main { flex: 1; width: min(100%, 720px); margin: 0 auto; padding: 100px 0 90px; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; }
+.eyebrow { color: #6b7566; margin-bottom: 27px; }
+h1 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-weight: 400; font-size: clamp(48px, 7vw, 82px); line-height: 1.05; letter-spacing: -3.8px; text-wrap: balance; }
+.intro { max-width: 450px; font-size: 18px; line-height: 1.7; color: #697064; margin: 24px 0 34px; text-wrap: pretty; }
+.primary { display: flex; align-items: center; justify-content: space-between; gap: 64px; background: #273f2e; color: #fff; padding: 14px 20px; border: 1px solid #273f2e; border-radius: 4px; font-size: 14px; }
+.primary:active { background: #1a2e20; }
+.foundation { border-top: 1px solid #d6d9cf; padding-top: 25px; margin-top: 6px; max-width: 510px; }
+.section-index { color: #737e6c; }
+h2 { font-size: 18px; font-weight: 550; margin: 17px 0 10px; }
+.foundation p { color: #697064; font-size: 14px; line-height: 1.75; margin-bottom: 22px; }
+footer { border-top: 1px solid #d6d9cf; padding-top: 20px; min-height: 45px; font-size: 11px; color: #727a6c; }
+.update-status { display: flex; align-items: center; gap: 8px; line-height: 1.6; }
+.status-dot { width: 6px; height: 6px; background: #73856a; border-radius: 50%; flex-shrink: 0; }
+.status-dot.warning { background: #a56e2b; }
+.text-button { padding: 4px 0; background: none; border: none; color: #344c35; font-size: 12px; text-align: left; text-decoration: underline; text-underline-offset: 4px; }
+
+@media (hover: hover) and (pointer: fine) {
+  .primary:hover { background: #36553e; }
+  .text-button:hover { color: #142a18; }
+}
+
+@media (max-width: 600px) {
+  .app-shell { padding: 24px; }
+  .release-label { font-size: 9px; letter-spacing: .5px; }
+  main { padding: 80px 0; }
+  h1 { letter-spacing: -2px; }
+  .eyebrow { font-size: 9px; letter-spacing: .8px; }
+  footer { align-items: flex-start; flex-direction: column; gap: 10px; }
+}
