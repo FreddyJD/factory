@@ -747,7 +747,9 @@ pub async fn shell(task: &Task, args: &Value, cancel: CancellationToken) -> Resu
     }
     #[cfg(windows)]
     {
-        wrapped.wrap(process_wrap::tokio::CreationFlags(0x08000000));
+        wrapped.wrap(process_wrap::tokio::CreationFlags(
+            windows::Win32::System::Threading::CREATE_NO_WINDOW,
+        ));
         wrapped.wrap(process_wrap::tokio::KillOnDrop);
         wrapped.wrap(process_wrap::tokio::JobObject);
     }
