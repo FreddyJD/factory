@@ -77,7 +77,8 @@ pub async fn cli() -> Result<()> {
             acp(&factory, id).await
         }
         Some("--mcp") => {
-            let path = args.windows(2).find(|a|a[0] == "--workspace").map(|a| PathBuf::from(&a[1])).ok_or("MCP requires --workspace /repository to scope access")?.canonicalize().map_err(|e|e.to_string())?;
+            let path = args.windows(2).find(|a|a[0] == "--workspace").map(|a| PathBuf::from(&a[1])).ok_or("MCP requires --workspace /repository to scope access")?;
+            let path = dunce::canonicalize(path).map_err(|e|e.to_string())?;
             let result = mcp(factory.clone(), path, args.iter().any(|a|a == "--allow-execution")).await;
             factory.shutdown().await; result
         }
@@ -157,7 +158,7 @@ async fn acp(factory: &Factory, id: &str) -> Result<()> {
                             else { init_request = Some(request_id.clone()); message["params"]["clientCapabilities"] = json!({"fs":{"readTextFile":false,"writeTextFile":false},"terminal":false}); }
                         }
                         "session/new" => {
-                            let requested = message["params"]["cwd"].as_str().and_then(|p|std::fs::canonicalize(p).ok());
+                            let requested = message["params"]["cwd"].as_str().and_then(|p|dunce::canonicalize(p).ok());
                             if !initialized || session.is_some() || new_request.is_some() { rejection = Some("Initialize first; this process owns one session"); }
                             else if requested.as_ref() != Some(&task.directory) { rejection = Some("Open the prepared Factory worktree in your editor; ACP cwd must exactly match it"); }
                             else if message["params"]["additionalDirectories"].as_array().is_some_and(|a|!a.is_empty()) || message["params"].get("systemPrompt").is_some() { rejection = Some("Additional roots and editor system prompts are unsupported"); }

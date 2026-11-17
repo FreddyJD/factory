@@ -35,7 +35,7 @@ pub fn data_root() -> Result<PathBuf> {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
     }
-    path.canonicalize().map_err(|e| e.to_string())
+    dunce::canonicalize(&path).map_err(|e| e.to_string())
 }
 
 pub fn asset() -> Result<(&'static str, &'static str)> {

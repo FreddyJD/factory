@@ -1,6 +1,6 @@
 [package]
 name = "git-factory"
-version = "0.2.0"
+version = "0.2.1"
 description = "A controlled delivery line for software change"
 edition = "2021"
 rust-version = "1.90"
@@ -21,6 +21,7 @@ tauri-build = { version = "2", features = [] }
 atomic-write-file = "0.3"
 base64 = "0.23"
 directories = "6"
+dunce = "1"
 fs2 = "0.4"
 futures-util = "0.3"
 libc = "0.2"

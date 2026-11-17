@@ -104,8 +104,7 @@ pub fn git(directory: &Path, args: &[&str]) -> Result<String> {
 }
 
 fn repository(path: &Path) -> Result<Repository> {
-    let root = PathBuf::from(git(path, &["rev-parse", "--show-toplevel"])?)
-        .canonicalize()
+    let root = dunce::canonicalize(PathBuf::from(git(path, &["rev-parse", "--show-toplevel"])?))
         .map_err(|e| e.to_string())?;
     if root != path {
         return Err("Select the repository root, not a nested source directory".into());
@@ -142,7 +141,7 @@ fn repository(path: &Path) -> Result<Repository> {
 }
 
 pub fn discover(path: &Path) -> Result<Workspace> {
-    let path = path.canonicalize().map_err(|e| e.to_string())?;
+    let path = dunce::canonicalize(path).map_err(|e| e.to_string())?;
     if !path.is_dir() {
         return Err("Select a directory".into());
     }
@@ -156,7 +155,7 @@ pub fn discover(path: &Path) -> Result<Workspace> {
                 && entry.path().join(".git").exists()
             {
                 repositories.push(repository(
-                    &entry.path().canonicalize().map_err(|e| e.to_string())?,
+                    &dunce::canonicalize(entry.path()).map_err(|e| e.to_string())?,
                 )?);
             }
         }
@@ -196,7 +195,7 @@ pub fn initialize_empty(path: &Path) -> Result<Workspace> {
 }
 
 pub fn create_task(root: &Path, workspace: &Workspace, title: &str, model: &str) -> Result<Task> {
-    let root = root.canonicalize().map_err(|e| e.to_string())?;
+    let root = dunce::canonicalize(root).map_err(|e| e.to_string())?;
     if workspace.repositories.is_empty() {
         return Err("Workspace contains no committed repositories".into());
     }
@@ -242,7 +241,7 @@ pub fn create_task(root: &Path, workspace: &Workspace, title: &str, model: &str)
         }
         task.checkouts.push(Checkout {
             source: fresh.path,
-            path: path.canonicalize().map_err(|e| e.to_string())?,
+            path: dunce::canonicalize(&path).map_err(|e| e.to_string())?,
             base: fresh.base,
             branch,
         });
@@ -303,7 +302,7 @@ pub fn load_task(root: &Path, id: &str) -> Result<Task> {
     if task.id != id || !task.directory.starts_with(root.join("worktrees")) {
         return Err("Task ownership record is invalid".into());
     }
-    if task.directory.canonicalize().map_err(|e| e.to_string())? != task.directory {
+    if dunce::canonicalize(&task.directory).map_err(|e| e.to_string())? != task.directory {
         return Err("Task directory changed; execution refused".into());
     }
     let expected_directory = if task.checkouts.len() == 1 {
@@ -318,17 +317,13 @@ pub fn load_task(root: &Path, id: &str) -> Result<Task> {
         return Err("Task directory does not match recorded checkouts".into());
     }
     for checkout in &task.checkouts {
-        if checkout.path.canonicalize().map_err(|e| e.to_string())? != checkout.path
+        if dunce::canonicalize(&checkout.path).map_err(|e| e.to_string())? != checkout.path
             || !checkout.path.starts_with(root.join("worktrees").join(id))
         {
             return Err("Worktree path changed; execution refused".into());
         }
         let base = git(&checkout.path, &["rev-parse", "--show-toplevel"])?;
-        if PathBuf::from(base)
-            .canonicalize()
-            .map_err(|e| e.to_string())?
-            != checkout.path
-        {
+        if dunce::canonicalize(PathBuf::from(base)).map_err(|e| e.to_string())? != checkout.path {
             return Err("Worktree registration changed".into());
         }
     }
@@ -363,7 +358,7 @@ pub fn diff(task: &Task) -> Result<String> {
 }
 
 pub fn validate_links(root: &Path) -> Result<()> {
-    let root = root.canonicalize().map_err(|e| e.to_string())?;
+    let root = dunce::canonicalize(root).map_err(|e| e.to_string())?;
     let mut pending = vec![root.clone()];
     while let Some(directory) = pending.pop() {
         for entry in fs::read_dir(directory).map_err(|e| e.to_string())? {
@@ -373,7 +368,7 @@ pub fn validate_links(root: &Path) -> Result<()> {
             }
             let metadata = fs::symlink_metadata(entry.path()).map_err(|e| e.to_string())?;
             if metadata.file_type().is_symlink() {
-                let target = entry.path().canonicalize().map_err(|_| {
+                let target = dunce::canonicalize(entry.path()).map_err(|_| {
                     format!(
                         "Unresolved symlink {}; review it before execution",
                         entry.path().display()
@@ -396,7 +391,7 @@ mod tests {
     fn temp() -> PathBuf {
         let path = std::env::temp_dir().join(format!("factory-test-{}", Uuid::new_v4()));
         fs::create_dir_all(&path).unwrap();
-        path.canonicalize().unwrap()
+        dunce::canonicalize(&path).unwrap()
     }
     #[test]
     fn changes_stay_in_worktree_and_dirty_source_is_untouched() {
