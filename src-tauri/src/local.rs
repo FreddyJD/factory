@@ -258,6 +258,7 @@ mod tests {
         fs::create_dir_all(root.join("source")).unwrap();
         let root = dunce::canonicalize(root).unwrap();
         let workspace = workspace::initialize_empty(&root.join("source")).unwrap();
+        workspace::git(&workspace.path, &["config", "core.autocrlf", "false"]).unwrap();
         fs::create_dir(root.join("data")).unwrap();
         let task = workspace::create_task(&root.join("data"), &workspace, "Local issue", "fixture")
             .unwrap();
@@ -295,6 +296,13 @@ mod tests {
             "local content\n"
         );
         assert!(t.directory.exists());
+        assert_eq!(
+            repository::git(&p.path, &["rev-parse", "HEAD^{tree}"])
+                .await
+                .unwrap()
+                .trim(),
+            before["tree"].as_str().unwrap()
+        );
         assert!(repository::git(&p.path, &["status", "--porcelain"])
             .await
             .unwrap()
