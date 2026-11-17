@@ -10,10 +10,10 @@ Its debug path is `src-tauri/target/debug/factory-cli` (Windows: `factory-cli.ex
 
 ## ACP Agent
 
-Factory delegates to official OpenCode ACP v1, with one owned worktree/session per process. Authenticate in the desktop app first, then prepare an isolated task:
+Factory implements ACP v1 directly in Rust, with one owned worktree/session per process. Authenticate in the desktop app first, then prepare an isolated task:
 
 ```sh
-factory-cli prepare /absolute/source/repository
+factory-cli prepare /absolute/source/repository --model MODEL_ID
 ```
 
 The result includes the task ID, worktree path(s), branches, and base commits. Open the returned `directory` in your editor, then configure the ACP command:
@@ -27,11 +27,9 @@ The result includes the task ID, worktree path(s), branches, and base commits. O
 
 `session/new.cwd` must exactly match the prepared task directory. Factory does not silently substitute the source checkout or rewrite diff/location paths. Source unsaved buffers and dirty changes are not copied. Use a new prepared task for a new independent editor session. Do not open a task simultaneously in desktop execution and ACP; the ownership lock rejects that.
 
-Implemented: initialize (wire version 1), session/new, session/prompt, session/cancel, session/update and bidirectional session/request_permission. Prompt responses remain outstanding while tool activity/permissions stream. Only declared upstream prompt/MCP capabilities are advertised; history loading, listing, forks, modes, and configuration extensions are not exposed. ACP auth is performed through desktop onboarding, not a dummy authenticate RPC.
+Implemented: initialize (wire version 1), session/new, session/prompt, session/cancel, session/update and bidirectional session/request_permission. Prompt responses remain outstanding while tool activity/permissions stream. Only implemented text/resource-link prompt and MCP capabilities are advertised; history loading, listing, forks, modes, and configuration extensions are not exposed. ACP auth is performed through desktop onboarding, not a dummy authenticate RPC.
 
-Editor MCP server declarations are forwarded to OpenCode. Stdio commands and remote credentials supplied by the editor are trusted configuration, not confined by Git worktrees. Additional directories and editor system-prompt extensions are rejected. Unexpected editor filesystem/terminal callbacks are rejected rather than applying changes to the wrong checkout. The pinned runtime has a known proposed-edit callback despite disabled client filesystem capabilities; real approved-edit compatibility needs a signed-in smoke test.
-
-The desktop itself uses authenticated OpenCode HTTP/SSE for its full question/model/auth APIs. ACP is the external editor-facing interface, not a claim that ACP includes every OpenCode extension.
+Editor MCP server declarations connect through the native Rust rmcp client. Local stdio and unauthenticated HTTPS streamable HTTP are supported; remote OAuth/custom headers, legacy SSE transport, image/embedded resource blocks and extra directories are rejected rather than silently ignored. Factory executes native tools, not editor filesystem callbacks. Questions are excluded from baseline ACP; ordinary assistant questions can be answered in the next prompt. Permissions use only allow-once/reject-once. Prompt completion is emitted after the native session becomes idle; cancellation resolves active waiters and retains worktree files.
 
 ## Factory MCP Server
 
@@ -54,7 +52,7 @@ Add `--allow-execution` only when intentionally granting the connected client pe
 factory-cli review TASK_ID
 ```
 
-This requires an interactive terminal, displays pending requests and metadata from the existing owning worker using local authenticated control records, and accepts only literal `yes` for one-time approval. Do not connect this command as a model-callable tool. For question-tool interactions, prefer the desktop workflow; MCP-owner questions are not yet answerable through this CLI.
+This requires an interactive terminal, displays pending requests and metadata from the existing owning worker using user-private native interaction records, and accepts only literal `yes` for one-time approval. Do not connect this command as a model-callable tool. For question-tool interactions, prefer the desktop workflow; MCP-owner questions are not yet answerable through this CLI.
 
 Supported stdio profiles:
 
@@ -65,7 +63,7 @@ This is a tools-only implementation, not a claim of full MCP feature coverage. R
 
 ## MCP Client Connections
 
-Connections in the desktop app attach a trusted MCP server to the selected task via OpenCode. Local configuration:
+Connections in the desktop app attach a trusted MCP server to the selected task through the in-process Rust rmcp client. Local configuration:
 
 ```json
 {
@@ -80,8 +78,10 @@ Factory forces local-server cwd to the task directory. Relative filesystem serve
 { "type": "remote", "url": "https://your-trusted-server.example/mcp" }
 ```
 
-Connections are task-worker-local and not yet persisted by Factory. Authentication/header data is not saved in task records. OpenCode owns its MCP client compatibility; the successful live smoke test uses legacy initialization. Factory's modern server support does not imply the pinned upstream client implements all 2026-07-28 features or MRTR.
+Connections are native-session-local and not yet persisted. The client negotiates modern 2026-07-28 discovery with legacy fallback, namespaces dynamic tools, validates schemas, and supports MCP resource tools when advertised. All external calls require explicit approval. Unsupported elicitation/authentication fails rather than inventing user responses. Remote custom headers/OAuth are not implemented. Local environment configuration is trusted executable configuration, not confined filesystem access.
 
 ## Limits
+
+Native provider authentication must be completed separately using Factory's own OAuth client ID; direct Copilot inference remains experimental/undocumented. Only chat-completions tool-capable models are supported.
 
 No remote ACP hosting, network-accessible Factory API, editor certification, distributed scheduling, or unattended approvals in this MVP. Desktop and CLI share task records and ownership locks, not one live central daemon. Close an owner before transferring the task to another execution surface.

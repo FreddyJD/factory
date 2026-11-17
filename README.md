@@ -1,8 +1,8 @@
 # Git Factory
 
-A controlled delivery line for software change. Rust/Tauri core, official OpenCode coding harness, canvas-rendered worklist and transcript. Native DOM controls handle onboarding, text entry, approvals, and accessibility.
+A controlled delivery line for software change. Rust/Tauri core, in-process Rust agent harness and tools, canvas-rendered worklist and transcript. Native DOM controls handle onboarding, text entry, approvals, and accessibility.
 
-**MVP:** GitHub Copilot device onboarding, dynamic model selection, repository/multi-repository discovery, explicit empty-folder Git initialization, isolated task worktrees, coding sessions with tool approvals/questions, canvas journal and diff review, trusted MCP client connections, and separate ACP/MCP stdio CLI interfaces. Signed Windows releases remain enabled.
+**MVP:** native Rust agent/tool loop, GitHub Copilot device onboarding, dynamic model selection, repository/multi-repository discovery, explicit empty-folder Git initialization, isolated task worktrees, coding sessions with tool approvals/questions, canvas journal and diff review, trusted MCP client connections, and separate ACP/MCP stdio CLI interfaces. Signed Windows releases remain enabled.
 
 This is bounded local execution, not the million-agent distributed scheduler. No automatic commits, pushes, PR publication, merge automation, or OS sandbox. A real Copilot subscription and human device authorization are required to run models. See [harness details and the full tool audit](docs/harness.md) and [protocol setup/limits](docs/protocols.md).
 
@@ -34,7 +34,9 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked --all-targets
 
 ## First Run
 
-Start the desktop app, continue through runtime installation, authorize OpenCode's GitHub Copilot device flow, select a model, and choose a trusted repository or parent folder. Empty folders can be initialized explicitly; existing files are never automatically staged. Describe a goal to create worktrees and start a task. Edits/shell tools require approval once; inspect their metadata before approving. Credentials stay in the app-owned OpenCode profile, not an OS keychain.
+No coding-runtime download or OpenCode executable is needed. Register a GitHub OAuth app with device flow enabled and enter its public client ID in onboarding (or set `GIT_FACTORY_GITHUB_CLIENT_ID`). Direct Copilot HTTP inference is experimental/undocumented; a newly registered client is not guaranteed entitlement. Existing OpenCode credentials are not imported. App-update signature verification remains enabled and is unrelated to the removed OpenCode installer.
+
+Start the desktop app, continue through native GitHub OAuth configuration, authorize Factory's GitHub Copilot device flow, select a model, and choose a trusted repository or parent folder. Empty folders can be initialized explicitly; existing files are never automatically staged. Describe a goal to create worktrees and start a task. Edits/shell tools require approval once; inspect their metadata before approving. Credentials stay Rust-side in the OS credential store.
 
 Task worktrees and history survive restarts. Stop cancels a turn; Close worker releases a local slot without removing files. Four task workers may be open simultaneously. New code executes as your user, so only use trusted repositories, commands and MCP servers. Git content filters are disabled for Factory Git operations; LFS files remain pointers.
 
@@ -45,7 +47,7 @@ Build the console integration executable with `cargo build --manifest-path src-t
 Normal pushes to `main` and pull requests run Windows/macOS CI without release secrets. Only stable `vMAJOR.MINOR.PATCH` tags publish Windows releases.
 
 ```sh
-npm run release:version -- 0.1.1
+npm run release:version -- 0.3.1
 npm run check
 git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json
 git commit -m "Release 0.1.1"

@@ -8,7 +8,7 @@ import { createInterface } from "node:readline";
 const root = process.env.GIT_FACTORY_DATA_DIR;
 assert.ok(
   root,
-  "Set a disposable GIT_FACTORY_DATA_DIR with the pinned runtime installed",
+  "Set a disposable GIT_FACTORY_DATA_DIR for native session state",
 );
 const workspace = mkdtempSync(join(tmpdir(), "factory-acp-source-"));
 execFileSync("git", ["init", "-b", "main", workspace]);
@@ -28,7 +28,7 @@ const binary = resolve(
   `src-tauri/target/debug/factory-cli${process.platform === "win32" ? ".exe" : ""}`,
 );
 const task = JSON.parse(
-  execFileSync(binary, ["prepare", workspace], {
+  execFileSync(binary, ["prepare", workspace, "--model", "fixture-model"], {
     encoding: "utf8",
     env: process.env,
   }),
@@ -83,7 +83,7 @@ try {
   assert.ok(created.result.sessionId);
   assert.equal(created.result.configOptions, undefined);
   console.log(
-    `Real OpenCode ACP initialization, fragmented frames, source rejection, and owned session passed: ${task.id}`,
+    `Native Rust ACP initialization, fragmented frames, source rejection, and owned session passed: ${task.id}`,
   );
 } finally {
   child.stdin.end();

@@ -41,5 +41,11 @@ jobs:
       - run: cargo test --manifest-path src-tauri/Cargo.toml --locked --all-targets
       - run: cargo build --manifest-path src-tauri/Cargo.toml --locked --bin factory-cli
       - run: node scripts/protocol-smoke.mjs
+      - name: Native ACP and MCP interoperability (no inference)
+        shell: bash
+        run: |
+          export GIT_FACTORY_DATA_DIR="$RUNNER_TEMP/git-factory-native-smoke"
+          node scripts/acp-smoke.mjs
+          cargo run --manifest-path src-tauri/Cargo.toml --locked --example native-smoke
       - name: Build desktop executable without signing
         run: npm run tauri build -- --debug --no-bundle -- --locked

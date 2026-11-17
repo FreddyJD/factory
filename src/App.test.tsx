@@ -61,9 +61,10 @@ beforeEach(() => {
     ) => {
       if (action === "status")
         return {
-          installed: true,
+          engine: "native-rust",
+          githubClientId: "fixture-client",
           tasks: [task("a"), task("b")],
-          version: "1.19.6",
+          version: "native",
           dataRoot: "/data",
         };
       if (action === "workspace")
@@ -99,6 +100,20 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("factory task safety", () => {
+  it("goes directly from welcome to native GitHub onboarding with no runtime installer", async () => {
+    localStorage.removeItem("factory-workspace");
+    render(<App />);
+    const start = await screen.findByText(/Build your factory/);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    fireEvent.click(start);
+    expect(await screen.findByLabelText("GitHub OAuth client ID")).toBeTruthy();
+    expect(screen.queryByText("Install coding runtime")).toBeNull();
+    expect(
+      request.mock.calls.some((call) => call[1].action === "install"),
+    ).toBe(false);
+  });
   it("removes stale approval controls while another task loads", async () => {
     render(<App />);
     await act(async () => {

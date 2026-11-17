@@ -1,5 +1,8 @@
+pub mod mcp;
 pub mod protocol;
+pub mod provider;
 pub mod runtime;
+pub mod tools;
 pub mod workspace;
 
 use serde::Serialize;
@@ -54,14 +57,14 @@ async fn factory_api(
     let text = |key: &str| args[key].as_str().ok_or_else(|| format!("Missing {key}"));
     match action.as_str() {
         "status" => Ok(
-            json!({"installed":runtime::binary(&factory.root).exists(),"version":runtime::OPENCODE_VERSION,"tasks":factory.summaries().await?,"dataRoot":factory.root}),
+            json!({"engine":"native-rust","version":env!("CARGO_PKG_VERSION"),"githubClientId":factory.copilot.configured_client(),"providerNotice":provider::NOTICE,"tasks":factory.summaries().await?,"dataRoot":factory.root}),
         ),
         "prepare_update" => {
             factory.shutdown().await;
             Ok(json!(true))
         }
-        "install" => {
-            factory.install().await?;
+        "configure_github" => {
+            factory.copilot.configure(text("clientId")?)?;
             Ok(json!(true))
         }
         "login_start" => factory.login_start().await,
@@ -69,11 +72,7 @@ async fn factory_api(
             open::that("https://github.com/login/device").map_err(|e| e.to_string())?;
             Ok(json!(true))
         }
-        "login_finish" => {
-            factory
-                .login_finish(args["method"].as_u64().ok_or("Missing OAuth method")? as usize)
-                .await
-        }
+        "login_finish" => factory.login_finish(text("attemptId")?).await,
         "models" => factory.models().await,
         "pick_folder" => {
             let folder = rfd::AsyncFileDialog::new()
@@ -134,14 +133,8 @@ async fn factory_api(
                 .mcp(text("taskId")?, text("name")?, args["config"].clone())
                 .await
         }
-        "mcp_status" => factory.worker(text("taskId")?).await?.get("/mcp").await,
-        "tools" => {
-            factory
-                .worker(text("taskId")?)
-                .await?
-                .get("/experimental/tool/ids")
-                .await
-        }
+        "mcp_status" => factory.mcp_status(text("taskId")?).await,
+        "tools" => factory.tool_ids(text("taskId")?).await,
         "open_worktree" => {
             let task = workspace::load_task(&factory.root, text("taskId")?)?;
             open::that(&task.directory).map_err(|e| e.to_string())?;

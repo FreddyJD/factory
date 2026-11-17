@@ -74,7 +74,9 @@ export interface ProviderCatalog {
   connected: string[];
 }
 export interface RuntimeStatus {
-  installed: boolean;
+  engine: "native-rust";
+  githubClientId: string | null;
+  providerNotice: string;
   version: string;
   tasks: Task[];
   dataRoot: string;

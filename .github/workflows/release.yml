@@ -64,6 +64,12 @@ jobs:
       - run: cargo test --manifest-path src-tauri/Cargo.toml --locked --all-targets
       - run: cargo build --manifest-path src-tauri/Cargo.toml --locked --bin factory-cli
       - run: node scripts/protocol-smoke.mjs
+      - name: Native ACP and MCP interoperability (no inference)
+        shell: bash
+        run: |
+          export GIT_FACTORY_DATA_DIR="$RUNNER_TEMP/git-factory-native-smoke"
+          node scripts/acp-smoke.mjs
+          cargo run --manifest-path src-tauri/Cargo.toml --locked --example native-smoke
       - run: cargo build --manifest-path src-tauri/Cargo.toml --locked --release --bin factory-cli
       - name: Require the updater signing key
         shell: bash
@@ -87,7 +93,7 @@ jobs:
           releaseBody: |
             Git Factory Windows x64 MVP. Download the setup.exe installer below.
 
-            Copilot onboarding, isolated Git worktrees, OpenCode coding harness, canvas worklist, and ACP/MCP integrations. Complete GitHub device authorization in the app to run models. Worktrees are not a security sandbox. Windows publisher signing is not configured yet, so SmartScreen may show a warning.
+            Copilot onboarding, isolated Git worktrees, native Rust coding harness, canvas worklist, and ACP/MCP integrations. No OpenCode binary or coding-runtime download. Configure Factory's own GitHub OAuth client ID and complete device authorization. Direct Copilot HTTP inference is experimental and may be restricted. Worktrees are not a security sandbox. Windows publisher signing is not configured yet, so SmartScreen may show a warning.
           releaseDraft: true
           prerelease: false
           generateReleaseNotes: true

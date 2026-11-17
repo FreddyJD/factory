@@ -2,7 +2,7 @@
 
 ## OpenCode
 
-Git Factory runs the official OpenCode executable, pinned to v1.19.6, commit `f4e363c8295fa90a03dddc451882fffe8fbce357`. Its coding tools and prompt assembly are used through its API, not reimplemented. Runtime archives are downloaded from https://github.com/anomalyco/opencode/releases/tag/v1.19.6 after user consent and checked against pinned SHA-256 digests.
+Git Factory has a native Rust agent harness and native tools inspired by OpenCode v1.19.6 tool contracts and provider wire behavior. It does not execute, download, embed or redistribute an OpenCode binary. Its MIT notice is retained for source-derived design/contract material.
 
 Source: https://github.com/anomalyco/opencode
 

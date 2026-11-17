@@ -19,9 +19,9 @@ import { FactoryCanvas } from "./factory-canvas";
 
 export function App() {
   const [stage, setStage] = useState<
-    "welcome" | "runtime" | "github" | "workspace" | "factory"
+    "welcome" | "github" | "workspace" | "factory"
   >("welcome");
-  const [runtime, setRuntime] = useState<RuntimeStatus | null>(null);
+  const [clientId, setClientId] = useState("");
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [catalog, setCatalog] = useState<ProviderCatalog | null>(null);
   const [model, setModel] = useState(
@@ -29,7 +29,7 @@ export function App() {
   );
   const [login, setLogin] = useState<{
     instructions: string;
-    methodIndex: number;
+    attemptId: string;
   } | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -93,10 +93,10 @@ export function App() {
     if (!desktop) return;
     void perform("Restoring your factory", async () => {
       const state = await api<RuntimeStatus>("status");
-      setRuntime(state);
+      setClientId(state.githubClientId ?? "");
       setTasks(state.tasks);
       const path = localStorage.getItem("factory-workspace");
-      if (state.installed && path) {
+      if (path) {
         const ws = await api<Workspace>("workspace", { path });
         setWorkspace(ws);
         const providers = await api<ProviderCatalog>("models");
@@ -278,10 +278,8 @@ export function App() {
 
   const connected = catalog?.connected.includes("github-copilot") ?? false;
   const availableModels = catalog ? models(catalog) : [];
-  const steps = ["Welcome", "Runtime", "GitHub", "Workspace"];
-  const stepIndex = ["welcome", "runtime", "github", "workspace"].indexOf(
-    stage,
-  );
+  const steps = ["Welcome", "GitHub", "Workspace"];
+  const stepIndex = ["welcome", "github", "workspace"].indexOf(stage);
   const visibleTasks = tasks.filter(
     (t) =>
       (!workspace || t.workspace === workspace.path) &&
@@ -371,7 +369,7 @@ export function App() {
               <button
                 className="primary"
                 disabled={!!busy}
-                onClick={() => setStage("runtime")}
+                onClick={() => setStage("github")}
               >
                 Build your factory <span aria-hidden="true">&rarr;</span>
               </button>
@@ -383,60 +381,36 @@ export function App() {
               )}
             </>
           )}
-          {stage === "runtime" && (
-            <>
-              <div className="eyebrow">THE TOOLS, WITHOUT THE REINVENTION</div>
-              <h1>A real engine.</h1>
-              <p className="intro">
-                OpenCode's coding harness, managed by Rust. Its tools, prompts,
-                subagents, and compaction run inside each task workspace.
-              </p>
-              <div className="setup-card">
-                <span className="section-index">OPENCODE / 1.19.6</span>
-                <p>
-                  A pinned, checksum-verified download from the official
-                  release. Runtime updates ship deliberately, not behind your
-                  back.
-                </p>
-                <small>
-                  MIT licensed. Copyright and license retained. Git must be
-                  installed separately.
-                </small>
-              </div>
-              <button
-                className="primary"
-                disabled={!!busy || !desktop}
-                onClick={() =>
-                  void perform(
-                    "Downloading and verifying OpenCode",
-                    async () => {
-                      await api("install");
-                      setRuntime(await api<RuntimeStatus>("status"));
-                      setStage("github");
-                    },
-                  )
-                }
-              >
-                {busy ||
-                  (runtime?.installed
-                    ? "Continue with installed runtime"
-                    : "Install coding runtime")}
-              </button>
-            </>
-          )}
           {stage === "github" && (
             <>
               <div className="eyebrow">YOUR ACCOUNT. YOUR INFERENCE.</div>
               <h1>Connect GitHub.</h1>
               <p className="intro">
-                Authorize OpenCode's GitHub Copilot integration in your browser.
-                Credentials stay in Factory's private runtime profile, not in
-                your repositories.
+                The agent loop and coding tools are built into the Rust app. No
+                runtime download, agent sidecar, or localhost tool server. Sign
+                in with Factory's own GitHub OAuth identity; credentials stay in
+                your OS credential store.
               </p>
               <p className="fine-print">
-                This connects Copilot inference. It does not grant Git Factory
-                repository write access or publish changes. Model availability
-                depends on your subscription and organization policy.
+                Experimental direct Copilot HTTP integration: inference
+                endpoints are undocumented and may be restricted or change. Only
+                enabled streaming chat-completions models with tool support are
+                listed. GitHub sign-in does not guarantee inference entitlement.
+              </p>
+              <label>
+                Git Factory OAuth client ID
+                <input
+                  aria-label="GitHub OAuth client ID"
+                  value={clientId}
+                  onChange={(event) => setClientId(event.target.value)}
+                  placeholder="Your registered GitHub OAuth app (device flow enabled)"
+                />
+              </label>
+              <p className="fine-print">
+                Create a GitHub OAuth app for Factory and enable device flow. A
+                client ID is public, not a client secret. We do not borrow
+                another application's identity. Existing OpenCode credentials
+                are not imported.
               </p>
               {!login ? (
                 <div className="button-row">
@@ -447,6 +421,10 @@ export function App() {
                       void perform(
                         "Requesting GitHub device code",
                         async () => {
+                          if (clientId.trim())
+                            await api("configure_github", {
+                              clientId: clientId.trim(),
+                            });
                           setLogin(await api("login_start"));
                         },
                       )
@@ -490,12 +468,15 @@ export function App() {
                         void perform(
                           "Waiting for GitHub approval",
                           async () => {
-                            applyCatalog(
-                              await api<ProviderCatalog>("login_finish", {
-                                method: login.methodIndex,
-                              }),
-                            );
-                            setLogin(null);
+                            try {
+                              applyCatalog(
+                                await api<ProviderCatalog>("login_finish", {
+                                  attemptId: login.attemptId,
+                                }),
+                              );
+                            } finally {
+                              setLogin(null);
+                            }
                           },
                         )
                       }
@@ -618,7 +599,7 @@ export function App() {
               disabled={!!busy}
               onClick={() =>
                 setStage(
-                  (["welcome", "runtime", "github", "workspace"] as const)[
+                  (["welcome", "github", "workspace"] as const)[
                     Math.max(0, stepIndex - 1)
                   ],
                 )
@@ -922,7 +903,7 @@ export function App() {
             />
           </label>
           <label>
-            OpenCode MCP configuration
+            MCP connection configuration
             <textarea
               value={mcpConfig}
               onChange={(e) => setMcpConfig(e.target.value)}
@@ -970,7 +951,7 @@ export function App() {
           <span className="status-dot" />
           {busy ||
             (desktop
-              ? "RUST CORE / OPENCODE HARNESS"
+              ? "NATIVE RUST AGENT / NATIVE TOOLS"
               : "BROWSER PREVIEW / DESKTOP REQUIRED FOR EXECUTION")}
         </div>
         {updater.current &&

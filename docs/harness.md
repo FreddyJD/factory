@@ -1,67 +1,60 @@
-# Coding Harness
+# Native Rust Harness
 
-Factory owns Git discovery, task/worktree lifecycle, bounded execution slots, UI and protocol access. The official OpenCode v1.19.6 executable owns the agent loop, inference, tools, prompt assembly, subagents, skills, compaction, and MCP client connections. This is intentionally not a partial port of its TypeScript implementation into Rust.
+Factory owns the complete in-process agent loop: inference requests, streamed tool-call assembly, tool schemas, validation, execution, human approvals, questions, bounded child agents, context budgeting, session persistence, cancellation, and MCP clients.
 
-Pinned source: https://github.com/anomalyco/opencode/tree/f4e363c8295fa90a03dddc451882fffe8fbce357
+There is no OpenCode binary, archive download, checksum installer, Node/Bun agent runtime, localhost agent server, or RPC hop for built-in tools. Git operations use installed Git; approved shell commands and trusted MCP servers may create subprocesses. Application update signatures are separate and remain enabled.
 
-The runtime is downloaded only on explicit installation, verified against a platform-specific SHA-256 digest, and never silently self-updated. Runtime upgrades require changing the pin, checksums, and integration tests together. See THIRD_PARTY_NOTICES.md.
+## Native Tools
 
-## Complete Tool Audit
+OpenCode v1.19.6 (commit f4e363c8295fa90a03dddc451882fffe8fbce357) inspired the tool names/contracts. Implementation is native Rust, not a claim of full behavioral parity.
 
-Paths below are relative to `packages/opencode/src/` at the pinned commit. Registry: `tool/registry.ts`. Factory preserves upstream availability/model rules, not an artificial promise that every tool is exposed to every model.
+| Tool                 | Implementation and boundaries                                                                                                                                                                         |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| read                 | UTF-8 regular files, line numbers, bounded directory lists, 2 MB input / 50 KB output. Binary/image attachments not implemented.                                                                      |
+| write                | Explicit full-content approval and atomic per-file replacement.                                                                                                                                       |
+| edit                 | Exact replacement, ambiguity rejection, explicit replaceAll, pre-allocation size checking; no fuzzy matching.                                                                                         |
+| apply_patch          | Rust parser for Begin/End Patch, Add/Delete/Update File, Move to, exact unique hunks and EOF. Plans all changes before approval, rechecks original content. Does not overwrite add/move destinations. |
+| glob                 | ignore/globset directory walking with bounded worktree-only ignore files, no external rg process.                                                                                                     |
+| grep                 | Rust regex, case-sensitive, bounded matching lines; file paths search only that file. No PCRE/lookaround/backreferences.                                                                              |
+| bash                 | User-approved /bin/sh on macOS, PowerShell on Windows; worktree cwd, bounded output/timeout, process-group/job cleanup. The historical tool name does not imply Bash is installed.                    |
+| webfetch             | User-approved public IPv4 HTTPS on port 443, DNS pinning, proxies/redirects disabled, bounded text response. Raw text/HTML, not a full markdown converter; IPv6-only sites unsupported.               |
+| todowrite            | Replaces the persisted task checklist.                                                                                                                                                                |
+| question             | Suspends for ordered structured answers or dismissal in desktop. Not advertised over baseline ACP.                                                                                                    |
+| task                 | User-approved read-only child investigation, eight inference requests maximum, no writing/shell/MCP/nested delegation. Shares the task cancellation and roots.                                        |
+| skill                | Explicit named checkout-local .gitfactory/skills/NAME/SKILL.md; no automatic host skill discovery.                                                                                                    |
+| dynamic MCP tools    | Native rmcp client, namespaced schemas, global collision rejection, explicit per-call approval.                                                                                                       |
+| MCP resource helpers | list_mcp_resources, list_mcp_resource_templates, read_mcp_resource when a server advertises resources; approval required.                                                                             |
 
-| Tool        | Implementation                  | Description / availability                                                     |
-| ----------- | ------------------------------- | ------------------------------------------------------------------------------ |
-| invalid     | tool/invalid.ts                 | Inline validation fallback                                                     |
-| question    | tool/question.ts                | tool/question.txt; desktop asks/replies supported                              |
-| bash        | tool/shell.ts, tool/shell/id.ts | tool/shell/shell.txt and prompt.ts; execution approval required                |
-| read        | tool/read.ts                    | tool/read.txt                                                                  |
-| glob        | tool/glob.ts                    | tool/glob.txt                                                                  |
-| grep        | tool/grep.ts                    | tool/grep.txt                                                                  |
-| edit        | tool/edit.ts                    | tool/edit.txt; model-dependent                                                 |
-| write       | tool/write.ts                   | tool/write.txt; model-dependent                                                |
-| task        | tool/task.ts                    | tool/task.txt; upstream subagent delegation                                    |
-| webfetch    | tool/webfetch.ts                | tool/webfetch.txt                                                              |
-| todowrite   | tool/todo.ts                    | tool/todowrite.txt                                                             |
-| websearch   | tool/websearch.ts               | tool/websearch.txt; provider/feature-gated, not enabled by default for Copilot |
-| skill       | tool/skill.ts                   | tool/skill.txt; external/user skill discovery disabled in the private profile  |
-| apply_patch | tool/apply_patch.ts             | tool/apply_patch.txt; replaces edit/write for applicable GPT models            |
-| execute     | tool/code-mode.ts               | Experimental MCP orchestration; not enabled by default                         |
-| lsp         | tool/lsp.ts                     | tool/lsp.txt; experimental, not enabled by default                             |
-| plan_exit   | tool/plan.ts                    | tool/plan-exit.txt; experimental CLI-only, not exposed by desktop              |
+Not implemented or advertised: LSP execution, plugin-supplied JavaScript tools, websearch, code-mode execute, plan_exit, background child agents, model-specific OpenCode prompt families, automatic formatting, image/PDF tools, semantic compaction, or unrestricted child writers. Factory has its own system prompt. Unknown/schema-invalid tools are rejected before execution.
 
-Additional generated tools: `list_mcp_resources`, `list_mcp_resource_templates`, `read_mcp_resource` and dynamic MCP tools (`session/tools.ts`); plugin custom tools (`tool/registry.ts`); `StructuredOutput` (`session/prompt.ts`); `_noop` Copilot compatibility fallback (`session/llm/request.ts`). User/project OpenCode plugin/config auto-loading is disabled; trusted MCP servers are added explicitly.
+## Agent Lifecycle
 
-## Prompts Retained Upstream
+One native session per task, at most four locally owned sessions, one active turn per task. The scheduler uses process file leases to prevent desktop/CLI double ownership. Session state is updated before UI/ACP events. Close cancels/joins execution before releasing ownership; changing MCP connections requires an idle task and lifecycle gate.
 
-- Model/system families: `session/prompt/{anthropic,beast,codex,default,gemini,gpt-astra,gpt,kimi,meta,trinity}.txt` and selection in `session/system.ts`.
-- Agent families: `agent/prompt/{compaction,explore,summary,title}.txt`, `agent/generate.txt`.
-- Plan transitions: `session/prompt/{plan,plan-mode,build-switch}.txt`, `session/reminders.ts`.
-- Commands: `command/template/{initialize,review}.txt`.
-- Repository instructions: `session/instruction.ts`; treated as untrusted context, not permission grants.
-- Compaction: `packages/core/src/session/compaction.ts` and `session/compaction.ts`.
-- Step limits, structured output, truncation, environment, tool catalogs, MCP instructions: upstream runtime assembly.
+Each inference response must have a successful terminal stream before any tool executes. Calls are assembled by index, validated as complete JSON, checked against the current tool registry, and bounded. Model arguments never decide permission policy. Edits/shell/network/MCP calls require a one-time exact-action decision. No autonomous commit/push/PR publication.
 
-Factory adds a small task-specific system supplement requiring minimal changes, validation evidence, correct worktrees, and no autonomous commit/push/PR publication. It does not replace the model-specific prompt stack. ACP sessions retain the upstream prompt stack without this HTTP-only supplement.
+The loop allows 40 inference requests per turn. Context budgeting includes system/tools and retains complete recent user turns, never splits tool-call/result groups, and explicitly notes older omitted turns. Full display history is retained; no semantic-summary claim is made. An oversized current turn fails instead of silently cutting tool pairs.
 
-## Execution And Storage
+Native history is versioned as rust-v1 in app data/sessions. Tool-call batches and running tool intents are persisted before side effects. Recovery appends explicit interrupted/unknown-outcome results to unresolved calls; uncertain mutations are never automatically replayed. JSON state uses atomic replacement. Multi-file patches are not transactional: writes finish before deletions so a failed move destination does not destroy its source. Partial application is reported. ACL/xattr metadata is not guaranteed by the atomic file library; ordinary Unix modes and move executable modes are preserved.
 
-One authenticated loopback OpenCode HTTP worker per task, at most four task workers locally. A separate onboarding worker owns the device login flow. Worker passwords are random, held in memory and in user-private local control records for interactive CLI review; never sent to the webview or checked into Git. OpenCode credentials are in its app-owned XDG data profile, not an OS keychain. Do not treat this as encrypted secret storage.
+## Worktree Policy
 
-One worktree per participating repository per task, allocated lazily from the recorded committed HEAD. A process file lock prevents desktop and CLI workers from simultaneously owning one task. Allocation is recorded before execution; incomplete allocation cannot run. Original checkouts and dirty source files are preserved. Task manifests use atomic replacement; OpenCode retains session history in its own database. This MVP uses local JSON task records, not the future distributed scheduler.
+Built-in filesystem tools resolve against the union of task checkout roots, not original source folders or broad app data. Traversal, Git metadata/aliases, escaping/dangling symlinks, and nonregular file reads are rejected. New destinations validate the existing parent. Content is revalidated after approval. Concurrent malicious filesystem changes still require an OS sandbox to confine; this is not a security sandbox.
 
-Stopping requests upstream cancellation and rejects pending permissions. Closing/exit also terminates managed workers. Worktrees are retained for review; there is no automatic dirty-worktree deletion. Explicit approvals apply once, not globally remembered grants.
+Git filters, hooks and fsmonitor are disabled for Factory's Git operations. Worktree allocation uses no-checkout first, then hardened read-tree so conditional branch filters cannot run during allocation. LFS pointer files remain pointers. Source dirt and unowned worktrees are preserved. Retained old OpenCode task worktrees can start a fresh native session; old upstream conversation context and credentials are not silently imported.
 
-## Boundaries
+Approved shell commands and trusted local MCP servers still execute with the user's account privileges, network access and access to shared Git metadata. OS-account permissions are not a model boundary. Use trusted repositories and review exact commands.
 
-Worktrees are not a security sandbox. Approved shell scripts and trusted MCP servers run with the user's account privileges, network access, and access to shared Git metadata. Permission wildcard rules are not a shell security policy. Git content filters are disabled for Factory checkout/status (LFS files remain pointers); tracked escaping or unresolved symlinks are rejected at worker startup. Later filesystem changes and arbitrary approved shell code require an actual OS sandbox to confine.
+## Provider
 
-Only trusted repositories should be used in this MVP. Project OpenCode configuration/plugins and home-directory skill discovery are disabled. Configuration, cache, state, and home paths are app-owned. Git hooks and fsmonitor are disabled for Factory's Git operations.
+GitHub device OAuth uses Factory's own registered OAuth application, configured in onboarding or GIT_FACTORY_GITHUB_CLIENT_ID. Enable device flow for that OAuth app. No client secret is needed or stored. Tokens remain Rust-side in macOS Keychain/Windows Credential Manager; the UI receives only the public client ID, attempt ID, verification URL and user code. Issuing client ID is bound to the credential, refreshes are serialized across processes, and replaced login generations cannot overwrite newer sign-ins.
 
-Copilot device authorization uses OpenCode's existing provider integration, not a new Factory OAuth identity. GitHub repository access is separate. A stored credential/model catalog is not proof of subscription entitlement; the first real inference request may still fail according to policy/quota.
+Direct Copilot inference is experimental and uses undocumented HTTP endpoints. A newly registered OAuth application is not guaranteed access; model discovery/inference can be denied despite successful GitHub login. No official compatibility claim is made. Only enabled streaming tool-capable /chat/completions catalog models are accepted. Responses-only and Anthropic Messages-only models are omitted. No provider billing/subscription is silently substituted.
 
-## Validation
+The adapter uses reqwest, preserves indexed tool arguments and opaque continuation metadata, honors cancellation and device-poll intervals/slow-down/deadline, and does not retry potentially partially executed inference. SSE currently accepts OpenAI-style one JSON data line per event plus [DONE]; arbitrary multi-line SSE payloads are not supported.
 
-`cargo run --manifest-path src-tauri/Cargo.toml --example runtime-smoke` downloads the pinned runtime and checks live auth-method discovery, built-in tools, session creation, message retrieval, and an actual Factory MCP connection without model inference. Build `factory-cli` first. Use a disposable `GIT_FACTORY_DATA_DIR` for integration tests.
+## Verification
 
-Real Copilot generation requires the user to complete device authorization. No automated test claims to validate a subscription, run a live paid model, certify an editor integration, or establish OS sandboxing.
+Run npm run check and the locked Rust tests/Clippy. Build factory-cli, then run scripts/protocol-smoke.mjs and scripts/acp-smoke.mjs with a disposable GIT_FACTORY_DATA_DIR. The native-smoke Rust example connects the native MCP client to the native Factory MCP server and calls a tool without auth/inference or external runtime installation.
+
+Provider fixtures validate fragmented UTF-8/SSE, complete tool calls, malformed/incomplete responses and model filtering. A scripted provider test exercises the real Rust loop through permission wait, worktree write, tool-result replay and completion without paid inference. This is not a live Copilot entitlement or real editor certification test.
