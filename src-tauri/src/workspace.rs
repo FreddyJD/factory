@@ -56,6 +56,8 @@ pub fn git(directory: &Path, args: &[&str]) -> Result<String> {
         .arg(directory)
         .args([
             "config",
+            "--null",
+            "--name-only",
             "--get-regexp",
             "^filter\\..*\\.(process|smudge|clean)$",
         ])
@@ -64,9 +66,18 @@ pub fn git(directory: &Path, args: &[&str]) -> Result<String> {
     let mut command = Command::new("git");
     // Disable configured content filters for our Git operations, including globally
     // installed LFS filters. Checkout preserves pointer files rather than running code.
-    for line in String::from_utf8_lossy(&filters.stdout).lines() {
-        if let Some(key) = line.split_whitespace().next() {
+    for key in String::from_utf8_lossy(&filters.stdout)
+        .split('\0')
+        .filter(|key| !key.is_empty())
+    {
+        {
             if let Some((driver, _)) = key.rsplit_once('.') {
+                if !driver
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
+                {
+                    return Err("Unsupported executable Git filter name; review repository configuration first".into());
+                }
                 for field in ["process", "smudge", "clean"] {
                     command.args(["-c", &format!("{driver}.{field}=")]);
                 }
@@ -317,6 +328,28 @@ pub fn load_task(root: &Path, id: &str) -> Result<Task> {
         return Err("Task directory does not match recorded checkouts".into());
     }
     for checkout in &task.checkouts {
+        let source_common = git(
+            &checkout.source,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        )?;
+        let checkout_common = git(
+            &checkout.path,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        )?;
+        if dunce::canonicalize(source_common).map_err(|e| e.to_string())?
+            != dunce::canonicalize(checkout_common).map_err(|e| e.to_string())?
+        {
+            return Err("Owned worktree no longer belongs to its source repository".into());
+        }
+        let registered = git(&checkout.source, &["worktree", "list", "--porcelain", "-z"])?;
+        if !registered
+            .split('\0')
+            .filter_map(|s| s.strip_prefix("worktree "))
+            .filter_map(|p| dunce::canonicalize(p).ok())
+            .any(|p| p == checkout.path)
+        {
+            return Err("Owned worktree is no longer registered".into());
+        }
         if dunce::canonicalize(&checkout.path).map_err(|e| e.to_string())? != checkout.path
             || !checkout.path.starts_with(root.join("worktrees").join(id))
         {

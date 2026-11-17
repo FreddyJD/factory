@@ -82,11 +82,19 @@ export interface RuntimeStatus {
   dataRoot: string;
 }
 
-export const desktop = isTauri();
+export const preview =
+  import.meta.env.DEV &&
+  !isTauri() &&
+  new URLSearchParams(location.search).get("preview") === "1";
+export const desktop = isTauri() || preview;
 export async function api<T>(
   action: string,
   args: Record<string, unknown> = {},
 ): Promise<T> {
+  if (preview) {
+    const { previewApi } = await import("./preview");
+    return (await previewApi(action, args)) as T;
+  }
   if (!desktop)
     throw new Error(
       "This action needs the desktop app. Run npm run tauri dev.",

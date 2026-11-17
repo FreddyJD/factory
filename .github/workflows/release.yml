@@ -93,7 +93,7 @@ jobs:
           releaseBody: |
             Git Factory Windows x64 MVP. Download the setup.exe installer below.
 
-            Copilot onboarding, isolated Git worktrees, native Rust coding harness, canvas worklist, and ACP/MCP integrations. No OpenCode binary or coding-runtime download. Configure Factory's own GitHub OAuth client ID and complete device authorization. Direct Copilot HTTP inference is experimental and may be restricted. Worktrees are not a security sandbox. Windows publisher signing is not configured yet, so SmartScreen may show a warning.
+            Repository-first Code, Issues, Pull Requests and History; live checkout/worktree browsing; native Rust coding harness and ACP/MCP integrations. No OpenCode binary or coding-runtime download. Configure Factory's own GitHub OAuth client ID and complete device authorization. Direct Copilot HTTP inference is experimental and may be restricted. Draft PR publication requires explicit authorization and successful validation. Worktrees are not a security sandbox. Windows publisher signing is not configured yet, so SmartScreen may show a warning.
           releaseDraft: true
           prerelease: false
           generateReleaseNotes: true

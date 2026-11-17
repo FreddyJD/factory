@@ -1,6 +1,8 @@
+pub mod issues;
 pub mod mcp;
 pub mod protocol;
 pub mod provider;
+pub mod repository;
 pub mod runtime;
 pub mod tools;
 pub mod workspace;
@@ -56,9 +58,125 @@ async fn factory_api(
     let args = args.unwrap_or(json!({}));
     let text = |key: &str| args[key].as_str().ok_or_else(|| format!("Missing {key}"));
     match action.as_str() {
-        "status" => Ok(
-            json!({"engine":"native-rust","version":env!("CARGO_PKG_VERSION"),"githubClientId":factory.copilot.configured_client(),"providerNotice":provider::NOTICE,"tasks":factory.summaries().await?,"dataRoot":factory.root}),
-        ),
+        "status" => {
+            if let Some(error) = factory.repositories.storage_error() {
+                return Err(error.into());
+            }
+            Ok(
+                json!({"engine":"native-rust","version":env!("CARGO_PKG_VERSION"),"githubClientId":factory.copilot.configured_client(),"providerNotice":provider::NOTICE,"tasks":factory.summaries().await?,"issues":issues::list(&factory.root)?,"projects":factory.repositories.list().await,"dataRoot":factory.root}),
+            )
+        }
+        "projects" => Ok(json!(factory.repositories.list().await)),
+        "project_open" => {
+            let folder = rfd::AsyncFileDialog::new()
+                .set_title("Open repository or folder of repositories")
+                .pick_folder()
+                .await;
+            match folder {
+                Some(folder) => {
+                    if std::fs::read_dir(folder.path())
+                        .map_err(|e| e.to_string())?
+                        .next()
+                        .is_none()
+                    {
+                        let approved=rfd::AsyncMessageDialog::new().set_title("Initialize Git repository?").set_description("This folder is empty. Create a Git repository and an empty initial commit?").set_buttons(rfd::MessageButtons::YesNo).show().await;
+                        if approved != rfd::MessageDialogResult::Yes {
+                            return Ok(Value::Null);
+                        }
+                        let path = folder.path().to_path_buf();
+                        tokio::task::spawn_blocking(move || workspace::initialize_empty(&path))
+                            .await
+                            .map_err(|e| e.to_string())??;
+                    }
+                    let projects = factory.repositories.register(folder.path()).await?;
+                    let requested =
+                        dunce::canonicalize(folder.path()).map_err(|e| e.to_string())?;
+                    let selected = projects
+                        .iter()
+                        .find(|p| {
+                            p.path == requested || p.path.parent() == Some(requested.as_path())
+                        })
+                        .map(|p| p.id.clone());
+                    Ok(json!({"projects":projects,"selected":selected}))
+                }
+                None => Ok(Value::Null),
+            }
+        }
+        "project_register" => Ok(json!(
+            factory
+                .repositories
+                .register(&PathBuf::from(text("path")?))
+                .await?
+        )),
+        "repository_inventory" => factory.repositories.inventory(text("projectId")?).await,
+        "repository_browse" => {
+            factory
+                .repositories
+                .browse(
+                    text("projectId")?,
+                    text("targetId")?,
+                    match args.get("path") {
+                        None => "",
+                        Some(value) => value.as_str().ok_or("path must be a string")?,
+                    },
+                )
+                .await
+        }
+        "repository_history" => {
+            factory
+                .repositories
+                .history(text("projectId")?, text("targetId")?)
+                .await
+        }
+        "project_mcp" => factory.repositories.mcp_configs(text("projectId")?).await,
+        "project_mcp_save" => {
+            factory
+                .repositories
+                .save_mcp(
+                    text("projectId")?,
+                    text("name")?,
+                    args.get("config").cloned().filter(|v| !v.is_null()),
+                )
+                .await
+        }
+        "issue_create" => Ok(json!(factory.create_issue(&args).await?)),
+        "pr_preview" => {
+            let task = workspace::load_task(&factory.root, text("taskId")?)?;
+            issues::candidate(&task).await
+        }
+        "pr_publish" => {
+            factory
+                .publish_issue(text("taskId")?, &args["preview"])
+                .await
+        }
+        "github_status" => {
+            let project = factory.repositories.project(text("projectId")?).await?;
+            issues::identity(&project.path).await
+        }
+        "pr_list" => {
+            let project = factory.repositories.project(text("projectId")?).await?;
+            issues::pulls(&project.path).await
+        }
+        "pr_view" => {
+            let project = factory.repositories.project(text("projectId")?).await?;
+            issues::pull(
+                &project.path,
+                args["number"].as_u64().ok_or("Missing PR number")?,
+            )
+            .await
+        }
+        "pr_approve" => {
+            let project = factory.repositories.project(text("projectId")?).await?;
+            issues::approve(
+                &project.path,
+                args["number"].as_u64().ok_or("Missing PR number")?,
+                text("head")?,
+                text("body")?,
+                text("repository")?,
+                text("account")?,
+            )
+            .await
+        }
         "prepare_update" => {
             factory.shutdown().await;
             Ok(json!(true))

@@ -6,193 +6,333 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 import { App } from "./App";
-
-const { request } = vi.hoisted(() => ({ request: vi.fn() }));
+const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({
   isTauri: () => true,
-  invoke: (...args: unknown[]) => request(...args),
+  invoke: (...args: unknown[]) => invoke(...args),
 }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: async () => () => {} }));
-vi.mock("./factory-canvas", () => ({
-  FactoryCanvas: class {
-    update() {}
-    destroy() {}
-  },
+vi.mock("./features/issues/components/IssueTranscript", () => ({
+  IssueTranscript: () => <div>Conversation canvas</div>,
 }));
-
-const task = (id: string) => ({
-  id,
-  title: `Task ${id}`,
+const projects = [
+  { id: "project-a", name: "factory", path: "/repo" },
+  { id: "project-b", name: "api", path: "/api" },
+];
+const task = {
+  id: "a".repeat(32),
+  title: "Add health endpoint",
   workspace: "/repo",
-  directory: `/worktrees/${id}`,
+  directory: "/worktrees/health",
   status: "working",
-  sessionId: `session-${id}`,
-  model: "test-model",
-  checkouts: [],
-});
-const snapshot = (id: string, permission = false) => ({
-  task: task(id),
-  messages: [],
-  status: { type: "busy" },
-  questions: [],
-  permissions: permission
-    ? [
-        {
-          id: `permission-${id}`,
-          permission: "bash",
-          patterns: ["run tests"],
-          metadata: { command: "npm test" },
-        },
-      ]
-    : [],
-});
-
+  sessionId: "native_a",
+  model: "fixture-model",
+  checkouts: [
+    {
+      source: "/repo",
+      path: "/worktrees/health",
+      base: "a".repeat(40),
+      branch: "factory/health",
+    },
+  ],
+};
+const target = {
+  id: "source",
+  path: "/repo",
+  branch: "main",
+  head: "a".repeat(40),
+  source: true,
+  taskId: null,
+};
+const agent = {
+  id: "agent",
+  path: "/worktrees/health",
+  branch: "factory/health",
+  head: "a".repeat(40),
+  source: false,
+  taskId: task.id,
+};
+const pr = {
+  number: 1,
+  title: "Fix retries",
+  author: { login: "colleague" },
+  headRefName: "fix/retries",
+  headRefOid: "a".repeat(40),
+  baseRefName: "main",
+  isDraft: false,
+  url: "https://github.com/acme/factory/pull/1",
+  files: [],
+  reviews: [],
+};
+function handler(
+  _command: string,
+  { action, args }: { action: string; args: Record<string, unknown> },
+): unknown {
+  switch (action) {
+    case "status":
+      return {
+        engine: "native-rust",
+        githubClientId: "fixture-client",
+        providerNotice: "experimental",
+        version: "0.3.0",
+        dataRoot: "/data",
+        projects,
+        tasks: [task],
+        issues: [],
+      };
+    case "repository_inventory":
+      return {
+        project: projects.find((p) => p.id === args.projectId),
+        targets:
+          args.projectId === "project-a"
+            ? [target, agent]
+            : [{ ...target, id: "api-source", path: "/api" }],
+        branches: ["main", "factory/health"],
+        remote: "https://github.com/acme/factory.git",
+      };
+    case "repository_browse":
+      return args.path === "README.md"
+        ? {
+            kind: "file",
+            path: "README.md",
+            content: "# Repository\n",
+            size: 13,
+          }
+        : {
+            kind: "directory",
+            path: args.path,
+            entries: [
+              {
+                name: "src",
+                path: "src",
+                kind: "directory",
+                size: 0,
+                modified: null,
+              },
+              {
+                name: args.targetId === "agent" ? "agent-only.rs" : "README.md",
+                path: args.targetId === "agent" ? "agent-only.rs" : "README.md",
+                kind: "file",
+                size: 13,
+                modified: null,
+              },
+            ],
+            readme: { name: "README.md", content: "# Repository" },
+          };
+    case "models":
+      return {
+        connected: ["github-copilot"],
+        all: [
+          {
+            id: "github-copilot",
+            models: {
+              "fixture-model": { id: "fixture-model", name: "Fixture model" },
+            },
+          },
+        ],
+      };
+    case "snapshot":
+      return {
+        task,
+        messages: [],
+        permissions: [
+          {
+            id: "permission-a",
+            permission: "bash",
+            patterns: ["npm test"],
+            metadata: { command: "npm test" },
+          },
+        ],
+        questions: [],
+        status: { type: "busy" },
+      };
+    case "pr_list":
+      return [pr];
+    case "pr_view":
+      return {
+        repository: "acme/factory",
+        account: "reviewer",
+        pull: pr,
+        diff: "diff --git a/a b/a\n+fixed",
+      };
+    case "project_open":
+      return { projects, selected: "project-a" };
+    case "project_mcp":
+      return {};
+    case "issue_create":
+      return { ...task, title: args.title };
+    default:
+      throw Error(`Unexpected API operation: ${action}`);
+  }
+}
 beforeEach(() => {
   localStorage.clear();
-  localStorage.setItem("factory-workspace", "/repo");
-  request.mockReset();
-  request.mockImplementation(
-    async (
-      _command,
-      { action, args }: { action: string; args: Record<string, unknown> },
-    ) => {
-      if (action === "status")
-        return {
-          engine: "native-rust",
-          githubClientId: "fixture-client",
-          tasks: [task("a"), task("b")],
-          version: "native",
-          dataRoot: "/data",
-        };
-      if (action === "workspace")
-        return {
-          path: "/repo",
-          repositories: [
-            {
-              name: "repo",
-              path: "/repo",
-              branch: "main",
-              base: "abc",
-              dirty: false,
-            },
-          ],
-          canInitialize: false,
-        };
-      if (action === "models")
-        return {
-          connected: ["github-copilot"],
-          all: [
-            {
-              id: "github-copilot",
-              models: { "test-model": { id: "test-model", name: "Test" } },
-            },
-          ],
-        };
-      if (action === "snapshot") return snapshot(String(args.taskId), true);
-      if (action === "diff") return `Diff ${args.taskId}`;
-      return true;
-    },
-  );
+  invoke.mockReset();
+  invoke.mockImplementation(handler);
 });
 afterEach(cleanup);
-
-describe("factory task safety", () => {
-  it("goes directly from welcome to native GitHub onboarding with no runtime installer", async () => {
-    localStorage.removeItem("factory-workspace");
+describe("repository-first application", () => {
+  it("opens Code before authentication and browses a real API-backed file", async () => {
     render(<App />);
-    const start = await screen.findByText(/Build your factory/);
-    await act(async () => {
-      await Promise.resolve();
-    });
-    fireEvent.click(start);
-    expect(await screen.findByLabelText("GitHub OAuth client ID")).toBeTruthy();
-    expect(screen.queryByText("Install coding runtime")).toBeNull();
+    await screen.findByRole("button", { name: "README.md" });
+    expect(screen.queryByText("Hello, world.")).toBeNull();
+    expect(screen.queryByText("Make room for your next big idea.")).toBeNull();
     expect(
-      request.mock.calls.some((call) => call[1].action === "install"),
-    ).toBe(false);
+      screen
+        .getByRole("navigation", { name: "Repository" })
+        .querySelector('[aria-current="page"]')?.textContent,
+    ).toBe("Code");
+    fireEvent.click(screen.getByRole("button", { name: "README.md" }));
+    expect(
+      (await screen.findByLabelText("Contents of README.md")).textContent,
+    ).toBe("# Repository\n");
+    expect(invoke.mock.calls.some((c) => c[1].action === "models")).toBe(false);
   });
-  it("removes stale approval controls while another task loads", async () => {
+  it("selects worktrees without switching Git branches", async () => {
     render(<App />);
-    await act(async () => {
-      await Promise.resolve();
-    });
-    const selector = await screen.findByLabelText("Select a task");
-    await act(async () => {
-      await Promise.resolve();
-    });
-    fireEvent.change(selector, { target: { value: "a" } });
-    await screen.findByText("Allow once");
-    const original = request.getMockImplementation()!;
-    request.mockImplementation((command, parameters) =>
-      parameters.action === "snapshot" && parameters.args.taskId === "b"
-        ? new Promise(() => {})
-        : original(command, parameters),
-    );
-    fireEvent.change(selector, { target: { value: "b" } });
-    expect(screen.queryByText("Allow once")).toBeNull();
+    const select = await screen.findByLabelText("Checkout or worktree");
+    await screen.findByRole("button", { name: "README.md" });
+    fireEvent.change(select, { target: { value: "agent" } });
+    await screen.findByRole("button", { name: "agent-only.rs" });
+    expect(
+      invoke.mock.calls
+        .filter((c) => c[1].action === "repository_browse")
+        .at(-1)?.[1].args.targetId,
+    ).toBe("agent");
+    expect(invoke.mock.calls.some((c) => c[1].action === "prompt")).toBe(false);
   });
-
-  it("rejects duplicate keyboard/form submissions while creation is pending", async () => {
+  it("ignores a slow source response after switching to an agent worktree", async () => {
     let finish!: (value: unknown) => void;
-    const original = request.getMockImplementation()!;
-    request.mockImplementation((command, parameters) =>
-      parameters.action === "create"
+    invoke.mockImplementation((command, params) =>
+      params.action === "repository_browse" && params.args.targetId === "source"
         ? new Promise((resolve) => {
             finish = resolve;
           })
-        : original(command, parameters),
+        : handler(command, params),
     );
     render(<App />);
-    await act(async () => {
-      await Promise.resolve();
+    const select = await screen.findByLabelText("Checkout or worktree");
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    fireEvent.change(select, { target: { value: "agent" } });
+    await screen.findByRole("button", { name: "agent-only.rs" });
+    await act(async () =>
+      finish({
+        kind: "directory",
+        path: "",
+        entries: [
+          {
+            name: "stale.txt",
+            path: "stale.txt",
+            kind: "file",
+            size: 1,
+            modified: null,
+          },
+        ],
+      }),
+    );
+    expect(screen.queryByRole("button", { name: "stale.txt" })).toBeNull();
+  });
+  it("creates one issue and immediately submits its description for execution", async () => {
+    let finish!: (value: unknown) => void;
+    invoke.mockImplementation((command, params) =>
+      params.action === "issue_create"
+        ? new Promise((resolve) => {
+            finish = resolve;
+          })
+        : handler(command, params),
+    );
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "New issue" }));
+    const title = await screen.findByLabelText("Title");
+    await screen.findByRole("option", { name: "Fixture model" });
+    fireEvent.change(title, { target: { value: "Fix health endpoint" } });
+    fireEvent.change(screen.getByLabelText("Description"), {
+      target: { value: "Return 200 and add tests" },
     });
-    const input = await screen.findByLabelText("New goal");
-    await act(async () => {
-      await Promise.resolve();
-    });
-    fireEvent.change(input, { target: { value: "Build a tested feature" } });
-    const form = input.closest("form")!;
-    fireEvent.submit(form);
+    const form = title.closest("form")!;
     fireEvent.submit(form);
     fireEvent.submit(form);
     await waitFor(() =>
       expect(
-        request.mock.calls.filter((call) => call[1].action === "create"),
+        invoke.mock.calls.filter((c) => c[1].action === "issue_create"),
       ).toHaveLength(1),
     );
-    await act(async () => finish(task("c")));
+    const args = invoke.mock.calls.find(
+      (c) => c[1].action === "issue_create",
+    )![1].args;
+    expect(args).toMatchObject({
+      title: "Fix health endpoint",
+      body: "Return 200 and add tests",
+      projectId: "project-a",
+      nativeEdits: true,
+      autoPr: false,
+    });
+    await act(async () => finish(task));
   });
-
-  it("does not replace a new task's diff with an older slow response", async () => {
-    let finishA!: (value: unknown) => void;
-    const original = request.getMockImplementation()!;
-    request.mockImplementation((command, parameters) =>
-      parameters.action === "diff" && parameters.args.taskId === "a"
-        ? new Promise((resolve) => {
-            finishA = resolve;
-          })
-        : original(command, parameters),
-    );
+  it("reopens the explicitly selected existing project", async () => {
     render(<App />);
-    await act(async () => {
-      await Promise.resolve();
-    });
-    const selector = await screen.findByLabelText("Select a task");
-    await act(async () => {
-      await Promise.resolve();
-    });
-    fireEvent.change(selector, { target: { value: "a" } });
-    fireEvent.click(screen.getByText("Changes"));
-    fireEvent.click(screen.getByText("Accessible text / copy"));
-    fireEvent.change(selector, { target: { value: "b" } });
-    const journal = screen.getByLabelText(
-      "Selectable execution journal",
-    ) as HTMLTextAreaElement;
-    await waitFor(() => expect(journal.value).toBe("Diff b"));
-    await act(async () => finishA("Diff a"));
-    expect(journal.value).toBe("Diff b");
+    await screen.findByRole("button", { name: "README.md" });
+    fireEvent.click(screen.getByRole("button", { name: "api" }));
+    await waitFor(() =>
+      expect(
+        screen
+          .getByLabelText("Checkout or worktree")
+          .querySelector("option:checked")
+          ?.getAttribute("value"),
+      ).toBe("api-source"),
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: "Open project" })[0]);
+    await waitFor(() =>
+      expect(
+        screen
+          .getByLabelText("Checkout or worktree")
+          .querySelector("option:checked")
+          ?.getAttribute("value"),
+      ).toBe("source"),
+    );
+  });
+  it("clears old tool approvals when leaving an issue", async () => {
+    render(<App />);
+    const nav = await screen.findByRole("navigation", { name: "Repository" });
+    fireEvent.click(within(nav).getByRole("button", { name: /Issues/ }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Add health endpoint/ }),
+    );
+    await screen.findByRole("button", { name: "Allow once" });
+    fireEvent.click(within(nav).getByRole("button", { name: "Code" }));
+    expect(screen.queryByRole("button", { name: "Allow once" })).toBeNull();
+  });
+  it("invalidates an approval confirmation when the PR head changes", async () => {
+    render(<App />);
+    const nav = await screen.findByRole("navigation", { name: "Repository" });
+    fireEvent.click(within(nav).getByRole("button", { name: "Pull requests" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Fix retries/ }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Approve pull request" }),
+    );
+    await screen.findByRole("button", { name: "Submit approval" });
+    invoke.mockImplementation((command, params) =>
+      params.action === "pr_view"
+        ? {
+            repository: "acme/factory",
+            account: "reviewer",
+            pull: { ...pr, headRefOid: "b".repeat(40) },
+            diff: "new diff",
+          }
+        : handler(command, params),
+    );
+    fireEvent.focus(window);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Submit approval" }),
+      ).toBeNull(),
+    );
+    expect(invoke.mock.calls.some((c) => c[1].action === "pr_approve")).toBe(
+      false,
+    );
   });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { visibleRange, wrapText } from "./factory-canvas";
+import { visibleRange, wrapText } from "./transcript-canvas";
 describe("canvas virtualization", () => {
   it("only visits visible rows even for a million tasks", () => {
     const range = visibleRange(760_000, 760, 1_000_000);

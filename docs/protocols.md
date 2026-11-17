@@ -10,7 +10,7 @@ Its debug path is `src-tauri/target/debug/factory-cli` (Windows: `factory-cli.ex
 
 ## ACP Agent
 
-Factory implements ACP v1 directly in Rust, with one owned worktree/session per process. Authenticate in the desktop app first, then prepare an isolated task:
+Factory implements ACP v1 directly in Rust, with one owned worktree/session per process. Authenticate through desktop Settings first, then prepare an isolated task:
 
 ```sh
 factory-cli prepare /absolute/source/repository --model MODEL_ID
@@ -78,7 +78,7 @@ Factory forces local-server cwd to the task directory. Relative filesystem serve
 { "type": "remote", "url": "https://your-trusted-server.example/mcp" }
 ```
 
-Connections are native-session-local and not yet persisted. The client negotiates modern 2026-07-28 discovery with legacy fallback, namespaces dynamic tools, validates schemas, and supports MCP resource tools when advertised. All external calls require explicit approval. Unsupported elicitation/authentication fails rather than inventing user responses. Remote custom headers/OAuth are not implemented. Local environment configuration is trusted executable configuration, not confined filesystem access.
+Active connections are native-session-local. The repository UI can persist explicitly trusted project server configuration and attach it to new issues; secrets in configuration environment fields are local plaintext under app data. The client negotiates modern 2026-07-28 discovery with legacy fallback, namespaces dynamic tools, validates schemas, and supports MCP resource tools when advertised. All external calls require explicit approval. Unsupported elicitation/authentication fails rather than inventing user responses. Remote custom headers/OAuth are not implemented. Local environment configuration is trusted executable configuration, not confined filesystem access.
 
 ## Limits
 

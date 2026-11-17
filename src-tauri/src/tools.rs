@@ -674,7 +674,24 @@ async fn capture(mut input: impl tokio::io::AsyncRead + Unpin) -> Result<Vec<u8>
     Ok(output)
 }
 
+pub struct ShellOutput {
+    pub success: bool,
+    pub code: Option<i32>,
+    pub output: String,
+}
 pub async fn shell(task: &Task, args: &Value, cancel: CancellationToken) -> Result<String> {
+    let result = shell_result(task, args, cancel).await?;
+    if result.success {
+        Ok(result.output)
+    } else {
+        Err(result.output)
+    }
+}
+pub async fn shell_result(
+    task: &Task,
+    args: &Value,
+    cancel: CancellationToken,
+) -> Result<ShellOutput> {
     if cancel.is_cancelled() {
         return Err("Cancelled".into());
     }
@@ -768,11 +785,15 @@ pub async fn shell(task: &Task, args: &Value, cancel: CancellationToken) -> Resu
     .await
     .map_err(|_| "Output pipe cleanup timed out")??;
     let status = result?;
-    Ok(format!(
-        "Exit status: {status}\n{}\n{}",
-        String::from_utf8_lossy(&output.0),
-        String::from_utf8_lossy(&output.1)
-    ))
+    Ok(ShellOutput {
+        success: status.success(),
+        code: status.code(),
+        output: format!(
+            "Exit status: {status}\n{}\n{}",
+            String::from_utf8_lossy(&output.0),
+            String::from_utf8_lossy(&output.1)
+        ),
+    })
 }
 
 fn public(ip: IpAddr) -> bool {

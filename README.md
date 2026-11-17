@@ -1,10 +1,10 @@
 # Git Factory
 
-A controlled delivery line for software change. Rust/Tauri core, in-process Rust agent harness and tools, canvas-rendered worklist and transcript. Native DOM controls handle onboarding, text entry, approvals, and accessibility.
+Repository-first development with a native Rust agent harness. Code, Issues, Pull Requests, and History use a compact GitHub-style interface with Bootstrap 3-style controls recreated in CSS. No Bootstrap JavaScript or jQuery dependency.
 
 **MVP:** native Rust agent/tool loop, GitHub Copilot device onboarding, dynamic model selection, repository/multi-repository discovery, explicit empty-folder Git initialization, isolated task worktrees, coding sessions with tool approvals/questions, canvas journal and diff review, trusted MCP client connections, and separate ACP/MCP stdio CLI interfaces. Signed Windows releases remain enabled.
 
-This is bounded local execution, not the million-agent distributed scheduler. No automatic commits, pushes, PR publication, merge automation, or OS sandbox. A real Copilot subscription and human device authorization are required to run models. See [harness details and the full tool audit](docs/harness.md) and [protocol setup/limits](docs/protocols.md).
+Issues start bounded local execution immediately. Optional draft PR publication must be explicitly authorized and pass validation; no automatic merges or OS sandbox. This is not the million-agent distributed scheduler. A real Copilot subscription and human device authorization are required to run models. See [harness details and the full tool audit](docs/harness.md) and [protocol setup/limits](docs/protocols.md).
 
 ## Download
 
@@ -23,7 +23,7 @@ npm ci
 npm run tauri dev
 ```
 
-Browser-only UI preview: `npm run dev`. The updater is deliberately inactive in the browser.
+Browser-only UI preview: `npm run dev`, then open `http://127.0.0.1:1420/?preview=1` for the explicitly labeled read-only fixture. Preview mutations are rejected and it is excluded from production builds. Use Tauri for real repositories.
 
 ```sh
 npm run check
@@ -34,26 +34,34 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked --all-targets
 
 ## First Run
 
-No coding-runtime download or OpenCode executable is needed. Register a GitHub OAuth app with device flow enabled and enter its public client ID in onboarding (or set `GIT_FACTORY_GITHUB_CLIENT_ID`). Direct Copilot HTTP inference is experimental/undocumented; a newly registered client is not guaranteed entitlement. Existing OpenCode credentials are not imported. App-update signature verification remains enabled and is unrelated to the removed OpenCode installer.
+No coding-runtime download or OpenCode executable is needed. Register a GitHub OAuth app with device flow enabled and enter its public client ID in Settings (or set `GIT_FACTORY_GITHUB_CLIENT_ID`). Direct Copilot HTTP inference is experimental/undocumented; a newly registered client is not guaranteed entitlement. Existing OpenCode credentials are not imported. App-update signature verification remains enabled and is unrelated to the removed OpenCode installer.
 
-Start the desktop app, continue through native GitHub OAuth configuration, authorize Factory's GitHub Copilot device flow, select a model, and choose a trusted repository or parent folder. Empty folders can be initialized explicitly; existing files are never automatically staged. Describe a goal to create worktrees and start a task. Edits/shell tools require approval once; inspect their metadata before approving. Credentials stay Rust-side in the OS credential store.
+Start the app and open a repository or a parent folder of repositories. Code opens immediately without requiring inference authentication. Browse source or a registered worktree from the checkout selector; the live filesystem refreshes every two seconds while visible. Configure Copilot in Settings when ready to create an issue. New issue creates an isolated worktree and starts the native agent. The issue's conversation, tool activity, questions and approvals remain in its thread. Native file edits can be preauthorized in that issue; shell and external tools still require approval. Credentials stay Rust-side in the OS credential store.
 
 Task worktrees and history survive restarts. Stop cancels a turn; Close worker releases a local slot without removing files. Four task workers may be open simultaneously. New code executes as your user, so only use trusted repositories, commands and MCP servers. Git content filters are disabled for Factory Git operations; LFS files remain pointers.
 
 Build the console integration executable with `cargo build --manifest-path src-tauri/Cargo.toml --bin factory-cli`. The Windows installer includes it beside the desktop executable. See [ACP/MCP setup](docs/protocols.md).
+
+## Issues And Pull Requests
+
+Issues are local engineering records, not synchronized GitHub Issues. Existing tasks remain visible as retained issue sessions. Pull Requests lists real GitHub PRs using installed `gh` authentication. Inspect their diff and submit approval for the exact reviewed head; the UI invalidates confirmation if the head changes. GitHub does not allow approving your own PR.
+
+At issue creation, optionally authorize validation, commit, push of only the assigned branch, and one draft PR. Otherwise prepare and confirm a draft PR manually from the completed issue. A validation command is required and must succeed without modifying the candidate. Publication uses a frozen candidate tree including new files, never force-pushes/tags/submodules, and records uncertain outcomes rather than retrying. The current starting commit must match the GitHub default branch; signed-commit policies require manual publication. Git push credentials and the GitHub CLI account are separate and must both have access. Live external publication/review has not been exercised by automated tests.
+
+MCP in the sidebar persists trusted project server configuration; new issues connect it in their worktree. Existing idle issues can attach a saved server explicitly. Configuration including supplied environment values is local plaintext under user-private app data; do not put secrets in project source.
 
 ## Release A Version
 
 Normal pushes to `main` and pull requests run Windows/macOS CI without release secrets. Only stable `vMAJOR.MINOR.PATCH` tags publish Windows releases.
 
 ```sh
-npm run release:version -- 0.3.1
+npm run release:version -- 0.4.1
 npm run check
 git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json
-git commit -m "Release 0.1.1"
-git tag v0.1.1
+git commit -m "Release 0.4.1"
+git tag v0.4.1
 git push origin main
-git push origin v0.1.1
+git push origin v0.4.1
 ```
 
 The tag must match every version file, point to a commit on `main`, and increase the released version. The release workflow checks and builds the app, creates a draft containing the installer, signature, and `latest.json`, verifies asset completeness, then publishes it as the latest stable release. Failed builds do not advertise an incomplete update. Published versions are never overwritten; ship a higher patch version to correct a release.

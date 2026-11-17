@@ -31,7 +31,7 @@ Not implemented or advertised: LSP execution, plugin-supplied JavaScript tools, 
 
 One native session per task, at most four locally owned sessions, one active turn per task. The scheduler uses process file leases to prevent desktop/CLI double ownership. Session state is updated before UI/ACP events. Close cancels/joins execution before releasing ownership; changing MCP connections requires an idle task and lifecycle gate.
 
-Each inference response must have a successful terminal stream before any tool executes. Calls are assembled by index, validated as complete JSON, checked against the current tool registry, and bounded. Model arguments never decide permission policy. Edits/shell/network/MCP calls require a one-time exact-action decision. No autonomous commit/push/PR publication.
+Each inference response must have a successful terminal stream before any tool executes. Calls are assembled by index, validated as complete JSON, checked against the current tool registry, and bounded. Model arguments never decide permission policy. Native edits require a one-time exact-action decision unless the user explicitly preauthorized them for a local issue. Shell/network/MCP calls still require exact approval. The agent cannot publish; an independently authorized host pipeline can validate and publish one draft PR after a normal completed issue.
 
 The loop allows 40 inference requests per turn. Context budgeting includes system/tools and retains complete recent user turns, never splits tool-call/result groups, and explicitly notes older omitted turns. Full display history is retained; no semantic-summary claim is made. An oversized current turn fails instead of silently cutting tool pairs.
 
@@ -47,7 +47,7 @@ Approved shell commands and trusted local MCP servers still execute with the use
 
 ## Provider
 
-GitHub device OAuth uses Factory's own registered OAuth application, configured in onboarding or GIT_FACTORY_GITHUB_CLIENT_ID. Enable device flow for that OAuth app. No client secret is needed or stored. Tokens remain Rust-side in macOS Keychain/Windows Credential Manager; the UI receives only the public client ID, attempt ID, verification URL and user code. Issuing client ID is bound to the credential, refreshes are serialized across processes, and replaced login generations cannot overwrite newer sign-ins.
+GitHub device OAuth uses Factory's own registered OAuth application, configured in Settings or GIT_FACTORY_GITHUB_CLIENT_ID. Enable device flow for that OAuth app. No client secret is needed or stored. Tokens remain Rust-side in macOS Keychain/Windows Credential Manager; the UI receives only the public client ID, attempt ID, verification URL and user code. Issuing client ID is bound to the credential, refreshes are serialized across processes, and replaced login generations cannot overwrite newer sign-ins.
 
 Direct Copilot inference is experimental and uses undocumented HTTP endpoints. A newly registered OAuth application is not guaranteed access; model discovery/inference can be denied despite successful GitHub login. No official compatibility claim is made. Only enabled streaming tool-capable /chat/completions catalog models are accepted. Responses-only and Anthropic Messages-only models are omitted. No provider billing/subscription is silently substituted.
 
