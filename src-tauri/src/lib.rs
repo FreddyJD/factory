@@ -1,4 +1,6 @@
+pub mod connections;
 pub mod issues;
+pub mod local;
 pub mod mcp;
 pub mod protocol;
 pub mod provider;
@@ -140,6 +142,32 @@ async fn factory_api(
                 .await
         }
         "issue_create" => Ok(json!(factory.create_issue(&args).await?)),
+        "local_reviews" => {
+            let project = factory.repositories.project(text("projectId")?).await?;
+            let list = issues::list(&factory.root)?
+                .into_iter()
+                .filter(|i| {
+                    i.project_id == project.id
+                        && (i.outcome == "completed" || !i.local_merge.is_null())
+                })
+                .collect::<Vec<_>>();
+            let remote = repository::git(&project.path, &["remote", "get-url", "origin"])
+                .await
+                .ok();
+            Ok(
+                json!({"issues":list,"github":remote.as_deref().is_some_and(|r|issues::github_repo(r.trim()).is_ok())}),
+            )
+        }
+        "local_preview" => {
+            factory
+                .local_review(text("projectId")?, text("taskId")?, None)
+                .await
+        }
+        "local_merge" => {
+            factory
+                .local_review(text("projectId")?, text("taskId")?, Some(&args["preview"]))
+                .await
+        }
         "pr_preview" => {
             let task = workspace::load_task(&factory.root, text("taskId")?)?;
             issues::candidate(&task).await
@@ -192,6 +220,10 @@ async fn factory_api(
         }
         "login_finish" => factory.login_finish(text("attemptId")?).await,
         "models" => factory.models().await,
+        "providers" => Ok(json!(factory.providers.list()?)),
+        "provider_save" => factory.providers.save(&args).await,
+        "provider_remove" => factory.providers.remove(text("id")?).await,
+        "provider_check" => factory.providers.check(text("id")?).await,
         "pick_folder" => {
             let folder = rfd::AsyncFileDialog::new()
                 .set_title("Open a repository or a folder of repositories")
@@ -289,7 +321,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![check_for_update, factory_api])
         .build(tauri::generate_context!())
-        .expect("could not start Git Factory")
+        .expect("could not start factory")
         .run(move |_app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
                 tauri::async_runtime::block_on(shutdown.shutdown());

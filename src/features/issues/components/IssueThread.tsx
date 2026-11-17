@@ -13,12 +13,14 @@ export function IssueThread({
   onBack,
   onCode,
   onChange,
+  onLocalReview,
 }: {
   task: Task;
   issue?: Issue;
   onBack: () => void;
   onCode: (path: string) => void;
   onChange: () => void;
+  onLocalReview: () => void;
 }) {
   const session = useIssue(task.id);
   const [comment, setComment] = useState("");
@@ -293,6 +295,15 @@ export function IssueThread({
               View changes
             </button>
           </div>
+          <hr />
+          <h4>Local review</h4>
+          <button
+            className="btn btn-default btn-sm"
+            disabled={!!busy || working || issue?.outcome !== "completed"}
+            onClick={onLocalReview}
+          >
+            Review and merge locally
+          </button>
           <hr />
           <h4>Pull request</h4>
           {issue?.publication?.url ? (

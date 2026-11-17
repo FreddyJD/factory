@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { version } from "../package.json";
 import { api, desktop, preview } from "./shared/api";
 import { belongs, type Tab } from "./shared/types";
+import { WindowControls } from "./shared/components/WindowControls";
 import { Icon } from "./shared/components/Icon";
 import { useProjects } from "./features/projects/hooks/useProjects";
 import { ProjectSidebar } from "./features/projects/components/ProjectSidebar";
@@ -65,7 +66,7 @@ export function App() {
         onOpen={() => void open()}
       />
       <div className="app-content">
-        <header className="global-header">
+        <header className="global-header" data-tauri-drag-region>
           <span className="global-breadcrumb">
             <Icon
               name={
@@ -98,6 +99,7 @@ export function App() {
               {opening ? "Opening…" : "Open project"}
             </button>
           </div>
+          <WindowControls />
         </header>
         {(error || projects.status.error) && (
           <div className="page-alert alert alert-danger" role="alert">
@@ -162,7 +164,7 @@ export function App() {
             }{" "}
             active runs
           </span>
-          <span>{projects.project?.path ?? "Git Factory"}</span>
+          <span>{projects.project?.path ?? "factory"}</span>
         </footer>
       </div>
     </div>

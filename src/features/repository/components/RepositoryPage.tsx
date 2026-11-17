@@ -132,7 +132,15 @@ export function RepositoryPage({
         {tab === "history" && (
           <HistoryView project={project} target={repository.target} />
         )}{" "}
-        {tab === "pulls" && <PullRequestsView project={project} />}{" "}
+        {tab === "pulls" && (
+          <PullRequestsView
+            project={project}
+            onChange={() => {
+              refresh();
+              repository.inventory.refresh();
+            }}
+          />
+        )}{" "}
         {tab === "issues" &&
           (creating ? (
             <NewIssue
@@ -153,6 +161,7 @@ export function RepositoryPage({
               issue={issues.find((i) => i.taskId === selectedTask.id)}
               onBack={() => setSelected(null)}
               onChange={refresh}
+              onLocalReview={() => changeTab("pulls")}
               onCode={(id) => {
                 setRequestedWorktree(id);
                 repository.inventory.refresh();

@@ -27,6 +27,8 @@ pub struct Issue {
     pub outcome: String,
     pub stop_reason: String,
     pub publication: Value,
+    #[serde(default)]
+    pub local_merge: Value,
 }
 pub fn now() -> u64 {
     SystemTime::now()
@@ -148,8 +150,14 @@ pub async fn identity(path: &Path) -> Result<Value> {
     )
 }
 pub async fn pulls(path: &Path) -> Result<Value> {
-    let remote = repository::git(path, &["remote", "get-url", "origin"]).await?;
-    let repo = github_repo(remote.trim())?;
+    let remote = match repository::git(path, &["remote", "get-url", "origin"]).await {
+        Ok(remote) => remote,
+        Err(_) => return Ok(json!([])),
+    };
+    let repo = match github_repo(remote.trim()) {
+        Ok(repo) => repo,
+        Err(_) => return Ok(json!([])),
+    };
     gh(path,&["pr","list","--repo",&repo,"--limit","100","--state","open","--json","number,title,author,headRefName,headRefOid,baseRefName,isDraft,url,createdAt,reviewDecision"],None).await
 }
 pub async fn pull(path: &Path, number: u64) -> Result<Value> {
@@ -226,7 +234,7 @@ pub async fn approve(
     .await
 }
 
-async fn hardened_git(path: &Path, args: &[&str], seconds: u64) -> Result<String> {
+pub(crate) async fn hardened_git(path: &Path, args: &[&str], seconds: u64) -> Result<String> {
     index_git(path, args, seconds, None).await
 }
 async fn index_git(

@@ -21,11 +21,11 @@ export function ProjectSidebar({
 }) {
   return (
     <aside className="app-sidebar">
-      <div className="app-brand">
+      <div className="app-brand" data-tauri-drag-region>
         <span className="brand-symbol">
           <Icon name="repo" size={21} />
         </span>
-        <strong>Git Factory</strong>
+        <strong>factory</strong>
       </div>
       <nav aria-label="Application">
         <button

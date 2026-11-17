@@ -47,11 +47,13 @@ Approved shell commands and trusted local MCP servers still execute with the use
 
 ## Provider
 
-GitHub device OAuth uses Factory's own registered OAuth application, configured in Settings or GIT_FACTORY_GITHUB_CLIENT_ID. Enable device flow for that OAuth app. No client secret is needed or stored. Tokens remain Rust-side in macOS Keychain/Windows Credential Manager; the UI receives only the public client ID, attempt ID, verification URL and user code. Issuing client ID is bound to the credential, refreshes are serialized across processes, and replaced login generations cannot overwrite newer sign-ins.
+GitHub device OAuth defaults to the same public client identity used by Roxy (`Iv1.b507a08c87ecfe98`), not a factory-owned registration. Settings exposes direct device login with an advanced override and GIT_FACTORY_GITHUB_CLIENT_ID. This shared identity/internal API compatibility is experimental. No client secret is needed or stored. Tokens remain Rust-side in macOS Keychain/Windows Credential Manager; the UI receives only the public client ID, attempt ID, verification URL and user code. Issuing client ID is bound to the credential, refreshes are serialized across processes, and replaced login generations cannot overwrite newer sign-ins.
 
-Direct Copilot inference is experimental and uses undocumented HTTP endpoints. A newly registered OAuth application is not guaranteed access; model discovery/inference can be denied despite successful GitHub login. No official compatibility claim is made. Only enabled streaming tool-capable /chat/completions catalog models are accepted. Responses-only and Anthropic Messages-only models are omitted. No provider billing/subscription is silently substituted.
+Direct Copilot inference is experimental and uses undocumented HTTP endpoints. The native adapter exchanges OAuth for a cached short-lived Copilot token and validates the assigned githubcopilot.com endpoint. A newly registered OAuth application is not guaranteed access; model discovery/inference can be denied despite successful GitHub login. No official compatibility claim is made. Only enabled streaming tool-capable /chat/completions catalog models are accepted. Responses-only and Anthropic Messages-only models are omitted. No provider billing/subscription is silently substituted.
 
 The adapter uses reqwest, preserves indexed tool arguments and opaque continuation metadata, honors cancellation and device-poll intervals/slow-down/deadline, and does not retry potentially partially executed inference. SSE currently accepts OpenAI-style one JSON data line per event plus [DONE]; arbitrary multi-line SSE payloads are not supported.
+
+OpenAI-compatible endpoints use the same Rust tool loop and SSE decoder, with separate endpoint-bound optional API keys. Models use durable `endpoint:CONNECTION_ID/MODEL_ID` selections. Destination and model are immutable under a connection ID; add a new connection to change them. Credentials do not cross provider boundaries. HTTPS and loopback HTTP only; redirects are disabled.
 
 ## Verification
 

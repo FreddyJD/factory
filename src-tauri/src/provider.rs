@@ -12,6 +12,13 @@ use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 
 const COPILOT: &str = "https://api.githubcopilot.com";
+const DEVICE_CLIENT: &str = "Iv1.b507a08c87ecfe98";
+struct CopilotToken {
+    oauth: String,
+    token: String,
+    base: String,
+    renew: Instant,
+}
 pub const NOTICE: &str = "Experimental direct Copilot HTTP integration. Inference endpoints are undocumented and may be restricted or change. No external agent runtime is used.";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -61,12 +68,14 @@ struct Device {
     interval: u64,
 }
 
+#[derive(Clone)]
 pub struct Copilot {
     root: PathBuf,
     client: reqwest::Client,
-    device: Mutex<Option<Device>>,
-    credentials: Mutex<()>,
-    catalog: Mutex<Vec<Model>>,
+    device: Arc<Mutex<Option<Device>>>,
+    credentials: Arc<Mutex<()>>,
+    catalog: Arc<Mutex<(String, Vec<Model>)>>,
+    exchange: Arc<Mutex<Option<CopilotToken>>>,
 }
 
 fn now() -> u64 {
@@ -86,9 +95,10 @@ impl Copilot {
                 .user_agent(concat!("GitFactory/", env!("CARGO_PKG_VERSION")))
                 .build()
                 .expect("HTTP client"),
-            device: Mutex::new(None),
-            credentials: Mutex::new(()),
-            catalog: Mutex::new(Vec::new()),
+            device: Arc::new(Mutex::new(None)),
+            credentials: Arc::new(Mutex::new(())),
+            catalog: Arc::new(Mutex::new((String::new(), Vec::new()))),
+            exchange: Arc::new(Mutex::new(None)),
         }
     }
     fn entry(&self) -> Result<keyring::Entry> {
@@ -103,6 +113,7 @@ impl Copilot {
             .ok()
             .filter(|v| !v.is_empty())
             .or_else(|| std::fs::read_to_string(self.root.join("github-client-id")).ok())
+            .or_else(|| Some(DEVICE_CLIENT.into()))
     }
     pub fn configure(&self, id: &str) -> Result<()> {
         if id.len() < 5
@@ -219,6 +230,23 @@ impl Copilot {
                 .map_err(|e| e.to_string())?;
             if value["access_token"].is_string() {
                 let credential = credential(&value, &device.client_id)?;
+                let identity: Value = self
+                    .client
+                    .get("https://api.github.com/user")
+                    .bearer_auth(&credential.access_token)
+                    .header("Accept", "application/vnd.github+json")
+                    .timeout(Duration::from_secs(30))
+                    .send()
+                    .await
+                    .map_err(|_| "GitHub account verification failed")?
+                    .error_for_status()
+                    .map_err(|_| "GitHub account verification failed")?
+                    .json()
+                    .await
+                    .map_err(|_| "Invalid GitHub identity response")?;
+                if identity["id"].as_u64().is_none() {
+                    return Err("GitHub account identity missing".into());
+                }
                 let _guard = self.credentials.lock().await;
                 let file_guard = self.credential_lock().await?;
                 if std::fs::read_to_string(self.root.join("login-generation"))
@@ -234,7 +262,8 @@ impl Copilot {
                     .map_err(|e| format!("Could not save credentials to OS store: {e}"))?;
                 drop(file_guard);
                 drop(_guard);
-                self.catalog.lock().await.clear();
+                *self.catalog.lock().await = (String::new(), Vec::new());
+                self.exchange.lock().await.take();
                 return self.models().await;
             }
             match value["error"].as_str() {
@@ -250,6 +279,13 @@ impl Copilot {
         }
     }
     async fn token(&self) -> Result<String> {
+        // Refresh can rotate a single-use token: callers must not cancel save-after-refresh.
+        let owner = self.clone();
+        tokio::spawn(async move { owner.token_inner().await })
+            .await
+            .map_err(|_| "Credential refresh task failed")?
+    }
+    async fn token_inner(&self) -> Result<String> {
         let _guard = self.credentials.lock().await;
         let _file_guard = self.credential_lock().await?;
         let data = self
@@ -280,27 +316,110 @@ impl Copilot {
         }
         Ok(credential.access_token)
     }
-    fn request(&self, method: reqwest::Method, path: &str, token: &str) -> reqwest::RequestBuilder {
-        self.client
-            .request(method, format!("{COPILOT}{path}"))
-            .bearer_auth(token)
-            .header("X-GitHub-Api-Version", "2026-06-01")
-            .header("Openai-Intent", "conversation-edits")
+    async fn request(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+    ) -> Result<(reqwest::RequestBuilder, String, String)> {
+        let oauth = self.token().await?;
+        let mut cache = self.exchange.lock().await;
+        if !cache
+            .as_ref()
+            .is_some_and(|c| c.oauth == oauth && Instant::now() < c.renew)
+        {
+            let started = Instant::now();
+            let response = self
+                .client
+                .get("https://api.github.com/copilot_internal/v2/token")
+                .header("Authorization", format!("token {oauth}"))
+                .header("Accept", "application/json")
+                .header(
+                    "Editor-Version",
+                    concat!("factory/", env!("CARGO_PKG_VERSION")),
+                )
+                .header(
+                    "Editor-Plugin-Version",
+                    concat!("factory/", env!("CARGO_PKG_VERSION")),
+                )
+                .timeout(Duration::from_secs(30))
+                .send()
+                .await
+                .map_err(|_| "Copilot token exchange could not connect")?;
+            if !response.status().is_success() {
+                return Err(format!("Copilot access: HTTP {}. Sign in again or check your subscription and organization policy.",response.status()));
+            }
+            let value: Value = response
+                .json()
+                .await
+                .map_err(|_| "Invalid Copilot token response")?;
+            let base =
+                validate_copilot_base(value["endpoints"]["api"].as_str().unwrap_or(COPILOT))?;
+            let lifetime = value["expires_at"]
+                .as_u64()
+                .ok_or("Copilot token expiry missing")?
+                .saturating_sub(now());
+            if lifetime < 10 {
+                return Err("Copilot returned an expired token; check the system clock".into());
+            }
+            let seconds = value["refresh_in"]
+                .as_u64()
+                .unwrap_or(lifetime)
+                .min(lifetime - lifetime.div_ceil(10).min(120))
+                .max(1);
+            *cache = Some(CopilotToken {
+                oauth,
+                token: value["token"]
+                    .as_str()
+                    .ok_or("Copilot token missing")?
+                    .into(),
+                base,
+                renew: started + Duration::from_secs(seconds),
+            });
+        }
+        let access = cache.as_ref().unwrap();
+        Ok((
+            self.client
+                .request(method, format!("{}{path}", access.base))
+                .bearer_auth(&access.token)
+                .header("X-GitHub-Api-Version", "2026-01-09")
+                .header(
+                    "Editor-Version",
+                    concat!("factory/", env!("CARGO_PKG_VERSION")),
+                )
+                .header(
+                    "Editor-Plugin-Version",
+                    concat!("factory/", env!("CARGO_PKG_VERSION")),
+                )
+                .header(
+                    "Openai-Intent",
+                    if path == "/models" {
+                        "model-access"
+                    } else {
+                        "conversation-panel"
+                    },
+                )
+                .header("X-Request-Id", uuid::Uuid::new_v4().to_string()),
+            access.oauth.clone(),
+            access.token.clone(),
+        ))
     }
     pub async fn models(&self) -> Result<Value> {
-        let token = match self.token().await {
-            Ok(token) => token,
-            Err(error) if error.starts_with("Sign in") => {
-                return Ok(json!({"all":[],"connected":[],"notice":NOTICE}))
-            }
-            Err(error) => return Err(error),
-        };
-        let response = self
-            .request(reqwest::Method::GET, "/models", &token)
+        let (request, credential, used_token) =
+            match self.request(reqwest::Method::GET, "/models").await {
+                Ok(request) => request,
+                Err(error) if error.starts_with("Sign in") => {
+                    return Ok(json!({"all":[],"connected":[],"notice":NOTICE}))
+                }
+                Err(error) => return Err(error),
+            };
+        let response = request
             .timeout(Duration::from_secs(30))
             .send()
             .await
             .map_err(|e| e.to_string())?;
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            self.invalidate(&used_token).await;
+        }
         if !response.status().is_success() {
             return Err(format!("Copilot model discovery: HTTP {}. Your OAuth app/account may not be entitled to this undocumented API.",response.status()));
         }
@@ -309,26 +428,59 @@ impl Copilot {
         if models.is_empty() {
             return Err("Copilot returned no enabled chat-completions models supporting streaming and tools. Responses/Messages-only models are not supported by this adapter.".into());
         }
-        *self.catalog.lock().await = models.clone();
+        if self.token().await? != credential {
+            return Err("GitHub account changed during model discovery; refresh models".into());
+        }
+        *self.catalog.lock().await = (credential, models.clone());
         let catalog: serde_json::Map<String,Value> = models.into_iter().map(|m|(m.id.clone(),json!({"id":m.id,"name":m.name,"context":m.context,"capabilities":{"toolcall":true}}))).collect();
         Ok(
             json!({"all":[{"id":"github-copilot","models":catalog}],"connected":["github-copilot"],"notice":NOTICE}),
         )
     }
+    async fn invalidate(&self, used: &str) {
+        let mut cache = self.exchange.lock().await;
+        if cache.as_ref().is_some_and(|c| c.token == used) {
+            cache.take();
+        }
+    }
     pub async fn model(&self, id: &str) -> Result<Model> {
-        if self.catalog.lock().await.is_empty() {
+        let credential = self.token().await?;
+        let stale = {
+            let catalog = self.catalog.lock().await;
+            catalog.0 != credential || catalog.1.is_empty()
+        };
+        if stale {
             self.models().await?;
         }
-        self.catalog
-            .lock()
-            .await
+        let catalog = self.catalog.lock().await;
+        if catalog.0 != credential {
+            return Err("GitHub account changed; refresh model selection".into());
+        }
+        catalog
+            .1
             .iter()
-            .find(|m| m.id == id)
+            .find(|model| model.id == id)
             .cloned()
             .ok_or("Select an available Copilot chat model".into())
     }
 }
 
+pub fn validate_copilot_base(value: &str) -> Result<String> {
+    let url = reqwest::Url::parse(value).map_err(|_| "Invalid Copilot endpoint")?;
+    let host = url.host_str().unwrap_or("");
+    if url.scheme() != "https"
+        || !(host == "api.githubcopilot.com" || host.ends_with(".githubcopilot.com"))
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.port_or_known_default() != Some(443)
+        || url.path() != "/"
+    {
+        return Err("Untrusted Copilot inference endpoint".into());
+    }
+    Ok(url.as_str().trim_end_matches('/').into())
+}
 fn credential(value: &Value, client_id: &str) -> Result<Credential> {
     Ok(Credential {
         client_id: client_id.into(),
@@ -346,12 +498,15 @@ pub fn parse_models(value: &Value) -> Vec<Model> {
         .into_iter()
         .flatten()
         .filter(|m| {
-            m["model_picker_enabled"] == true
+            (m["model_picker_enabled"] == true
+                || m["model_picker_category"].is_string()
+                || m["policy"]["state"] == "enabled")
                 && m["policy"]["state"].as_str().is_none_or(|s| s == "enabled")
-                && m["supported_endpoints"]
-                    .as_array()
-                    .is_some_and(|e| e.iter().any(|e| e == "/chat/completions"))
-                && m["capabilities"]["supports"]["streaming"] == true
+                && m.get("supported_endpoints").is_none_or(|e| {
+                    e.as_array()
+                        .is_some_and(|e| e.iter().any(|e| e == "/chat/completions"))
+                })
+                && m["capabilities"]["supports"]["streaming"] != false
                 && m["capabilities"]["supports"]["tool_calls"] == true
         })
         .filter_map(|m| {
@@ -377,6 +532,9 @@ pub struct StreamDecoder {
 }
 impl StreamDecoder {
     pub fn push(&mut self, bytes: &[u8]) -> Result<Vec<String>> {
+        if self.done {
+            return Ok(vec![]);
+        }
         self.buffer.extend_from_slice(bytes);
         if self.buffer.len() > 4_000_000 {
             return Err("Oversized provider stream frame".into());
@@ -392,12 +550,13 @@ impl StreamDecoder {
             };
             if data == "[DONE]" {
                 self.done = true;
-                continue;
+                self.buffer.clear();
+                break;
             }
             let value: Value =
                 serde_json::from_str(data).map_err(|_| "Malformed provider SSE JSON")?;
             if value.get("error").is_some() {
-                return Err("Copilot returned an inference stream error".into());
+                return Err("Inference provider returned a stream error".into());
             }
             if let Some(reason) = value["choices"][0]["finish_reason"].as_str() {
                 self.reason = Some(reason.into());
@@ -480,14 +639,18 @@ impl Inference for Copilot {
         deltas: mpsc::Sender<String>,
     ) -> BoxFuture<'a, Result<Completion>> {
         Box::pin(async move {
-            let token = self.token().await?;
-            let request = self
-                .request(reqwest::Method::POST, "/chat/completions", &token)
+            let (request, _credential, used_token) = self
+                .request(reqwest::Method::POST, "/chat/completions")
+                .await?;
+            let request = request
                 .header("x-initiator", initiator)
                 .header("X-Interaction-Id", uuid::Uuid::new_v4().to_string())
                 .json(&json!({"model":model,"messages":messages,"tools":tools,"stream":true}))
                 .timeout(Duration::from_secs(300));
             let response = tokio::select! {_ = cancel.cancelled()=>return Err("Cancelled".into()), response=request.send()=>response.map_err(|e|e.to_string())?};
+            if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+                self.invalidate(&used_token).await;
+            }
             if !response.status().is_success() {
                 return Err(format!("Copilot inference HTTP {}. Check entitlement, organization policy, quota, and API compatibility. No request was retried.",response.status()));
             }
@@ -526,6 +689,56 @@ mod tests {
         d.push(b"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n")
             .unwrap();
         assert!(d.finish().is_err());
+    }
+    #[tokio::test]
+    async fn late_auth_failure_cannot_invalidate_a_new_token() {
+        let provider = Copilot::new(Path::new("/unused-test"));
+        *provider.exchange.lock().await = Some(CopilotToken {
+            oauth: "oauth".into(),
+            token: "new-token".into(),
+            base: COPILOT.into(),
+            renew: Instant::now() + Duration::from_secs(60),
+        });
+        provider.invalidate("old-token").await;
+        assert!(provider.exchange.lock().await.is_some());
+        provider.invalidate("new-token").await;
+        assert!(provider.exchange.lock().await.is_none());
+    }
+    #[test]
+    fn copilot_hosts_are_restricted() {
+        for host in [
+            "https://api.githubcopilot.com",
+            "https://api.enterprise.githubcopilot.com",
+        ] {
+            assert!(validate_copilot_base(host).is_ok());
+        }
+        for host in [
+            "http://api.githubcopilot.com",
+            "https://api.githubcopilot.com.evil.example",
+            "https://user:token@api.githubcopilot.com",
+            "https://api.githubcopilot.com/path",
+        ] {
+            assert!(validate_copilot_base(host).is_err());
+        }
+    }
+    #[test]
+    fn done_is_terminal_independent_of_chunk_boundaries() {
+        let first=b"data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\ndata: [DONE]\n";
+        let trailing = b"data: not-valid-json\n";
+        let mut together = StreamDecoder::default();
+        let mut input = first.to_vec();
+        input.extend_from_slice(trailing);
+        together.push(&input).unwrap();
+        assert_eq!(together.finish().unwrap().text, "ok");
+        let mut split = StreamDecoder::default();
+        split.push(first).unwrap();
+        split.push(trailing).unwrap();
+        assert_eq!(split.finish().unwrap().text, "ok");
+    }
+    #[test]
+    fn models_accept_optional_streaming_metadata_but_not_responses_only() {
+        let value = json!({"data":[{"id":"chat","name":"Chat","policy":{"state":"enabled"},"capabilities":{"supports":{"tool_calls":true}}}]});
+        assert_eq!(parse_models(&value).len(), 1);
     }
     #[test]
     fn catalog_excludes_unsupported_endpoints() {

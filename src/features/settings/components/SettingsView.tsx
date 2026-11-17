@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { ProviderSettings } from "./ProviderSettings";
 import { version } from "../../../../package.json";
-import { api, models, type ProviderCatalog } from "../../../shared/api";
+import { api, type ProviderCatalog } from "../../../shared/api";
 import { useResource } from "../../../shared/hooks/useResource";
 import { updateLabel } from "../updater";
 import type { useAppUpdates } from "../hooks/useAppUpdates";
@@ -23,12 +24,14 @@ export function SettingsView({
     instructions: string;
   } | null>(null);
   const [busy, setBusy] = useState(false);
+  const operationGate = useRef(false);
   const [error, setError] = useState("");
   const catalog = useResource<ProviderCatalog>("settings-models", () =>
     api("models"),
   );
   async function action(operation: () => Promise<void>) {
-    if (busy) return;
+    if (operationGate.current) return;
+    operationGate.current = true;
     setBusy(true);
     setError("");
     try {
@@ -38,6 +41,7 @@ export function SettingsView({
     } catch (error) {
       setError(String(error));
     } finally {
+      operationGate.current = false;
       setBusy(false);
     }
   }
@@ -47,29 +51,35 @@ export function SettingsView({
       <div className="panel">
         <div className="panel-heading">GitHub Copilot</div>
         <div className="panel-body">
-          <label>
-            GitHub OAuth client ID
-            <input
-              className="form-control"
-              value={id}
-              onChange={(e) => {
-                touched.current = true;
-                setId(e.target.value);
-              }}
-            />
-          </label>
-          <p className="muted">
-            Use your GitHub OAuth app with device flow enabled. Credentials are
-            stored in the OS credential store. Direct Copilot HTTP inference is
-            experimental.
-          </p>
+          <p>Connect your GitHub Copilot subscription with a device code.</p>
+          <details className="provider-advanced">
+            <summary>Advanced GitHub configuration</summary>
+            <label>
+              OAuth client ID override
+              <input
+                className="form-control"
+                value={id}
+                onChange={(event) => {
+                  touched.current = true;
+                  setId(event.target.value);
+                }}
+              />
+            </label>
+            <p className="muted">
+              The default uses the same public device client identity as Roxy.
+              This is an experimental third-party Copilot integration, not an
+              official factory OAuth application. You can override it with your
+              registered client ID.
+            </p>
+          </details>
           <div className="button-row">
             <button
               className="btn btn-success"
-              disabled={busy || !id.trim()}
+              disabled={busy}
               onClick={() =>
                 void action(async () => {
-                  await api("configure_github", { clientId: id.trim() });
+                  if (touched.current && id.trim())
+                    await api("configure_github", { clientId: id.trim() });
                   setLogin(await api("login_start"));
                 })
               }
@@ -120,11 +130,13 @@ export function SettingsView({
           )}
           <p className="muted">
             {catalog.value?.connected.includes("github-copilot")
-              ? `${models(catalog.value).length} models available`
-              : (catalog.error ?? "Not connected")}
+              ? `${catalog.value.all.find((p) => p.id === "github-copilot") ? Object.keys(catalog.value.all.find((p) => p.id === "github-copilot")!.models).length : 0} GitHub models available`
+              : (catalog.error ??
+                (catalog.value?.errors?.join("; ") || "Not connected"))}
           </p>
         </div>
       </div>
+      <ProviderSettings onRefresh={onRefresh} />
       <div className="panel">
         <div className="panel-heading">GitHub repositories</div>
         <div className="panel-body">
@@ -138,7 +150,7 @@ export function SettingsView({
       <div className="panel">
         <div className="panel-heading">Application</div>
         <div className="panel-body">
-          <p>Git Factory {version}</p>
+          <p>factory {version}</p>
           {updates.supported ? (
             <div className="button-row">
               <span>{updateLabel(updates.state)}</span>

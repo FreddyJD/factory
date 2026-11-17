@@ -150,6 +150,10 @@ function handler(
         questions: [],
         status: { type: "busy" },
       };
+    case "local_reviews":
+      return { issues: [], github: true };
+    case "providers":
+      return [];
     case "pr_list":
       return [pr];
     case "pr_view":
@@ -305,6 +309,165 @@ describe("repository-first application", () => {
     await screen.findByRole("button", { name: "Allow once" });
     fireEvent.click(within(nav).getByRole("button", { name: "Code" }));
     expect(screen.queryByRole("button", { name: "Allow once" })).toBeNull();
+  });
+  it("shows local reviews without origin or a GitHub error", async () => {
+    const issue = {
+      taskId: task.id,
+      projectId: "project-a",
+      title: "Local change",
+      outcome: "completed",
+      localMerge: null,
+    };
+    const preview = {
+      taskId: task.id,
+      title: "Local change",
+      sourceRef: "refs/heads/main",
+      sourcePath: "/repo",
+      sourceHead: "a".repeat(40),
+      branch: "factory/health",
+      head: "b".repeat(40),
+      tree: "c".repeat(40),
+      diff: "+local content",
+      mode: "fast-forward",
+      validation: "",
+    };
+    invoke.mockImplementation((command, params) =>
+      params.action === "local_reviews"
+        ? { issues: [issue], github: false }
+        : params.action === "local_preview"
+          ? preview
+          : handler(command, params),
+    );
+    render(<App />);
+    const nav = await screen.findByRole("navigation", { name: "Repository" });
+    fireEvent.click(within(nav).getByRole("button", { name: "Pull requests" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Local change/ }),
+    );
+    await screen.findByText("+local content");
+    fireEvent.click(screen.getByRole("button", { name: "Merge locally" }));
+    await screen.findByRole("button", { name: "Confirm local merge" });
+    expect(invoke.mock.calls.some((c) => c[1].action === "pr_list")).toBe(
+      false,
+    );
+    invoke.mockImplementation((command, params) =>
+      params.action === "local_preview"
+        ? { ...preview, tree: "d".repeat(40) }
+        : params.action === "local_reviews"
+          ? { issues: [issue], github: false }
+          : handler(command, params),
+    );
+    fireEvent.focus(window);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Confirm local merge" }),
+      ).toBeNull(),
+    );
+    expect(invoke.mock.calls.some((c) => c[1].action === "local_merge")).toBe(
+      false,
+    );
+  });
+  it("merges a reviewed local candidate only once", async () => {
+    const issue = {
+      taskId: task.id,
+      title: "Local merge",
+      outcome: "completed",
+      localMerge: null,
+    };
+    const preview = {
+      taskId: task.id,
+      title: "Local merge",
+      sourceRef: "refs/heads/main",
+      sourcePath: "/repo",
+      sourceHead: "a".repeat(40),
+      branch: "factory/health",
+      head: "b".repeat(40),
+      tree: "c".repeat(40),
+      diff: "+native local",
+      mode: "fast-forward",
+      validation: "",
+    };
+    let finish!: (value: unknown) => void;
+    invoke.mockImplementation((command, params) =>
+      params.action === "local_reviews"
+        ? { issues: [issue], github: false }
+        : params.action === "local_preview"
+          ? preview
+          : params.action === "local_merge"
+            ? new Promise((resolve) => {
+                finish = resolve;
+              })
+            : handler(command, params),
+    );
+    render(<App />);
+    const nav = await screen.findByRole("navigation", { name: "Repository" });
+    fireEvent.click(within(nav).getByRole("button", { name: "Pull requests" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Local merge/ }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Merge locally" }),
+    );
+    const button = await screen.findByRole("button", {
+      name: "Confirm local merge",
+    });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(
+        invoke.mock.calls.filter((c) => c[1].action === "local_merge"),
+      ).toHaveLength(1),
+    );
+    expect(
+      invoke.mock.calls.find((c) => c[1].action === "local_merge")![1].args
+        .preview,
+    ).toEqual(preview);
+    await act(async () => finish({ commit: "d".repeat(40) }));
+    await screen.findByText(/Nothing was pushed/);
+  });
+  it("signs in with GitHub without requiring a client ID", async () => {
+    invoke.mockImplementation((command, params) =>
+      params.action === "login_start"
+        ? { attemptId: "attempt", instructions: "Enter code: ABCD-EFGH" }
+        : handler(command, params),
+    );
+    render(<App />);
+    await screen.findByRole("button", { name: "README.md" });
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Sign in with GitHub" }),
+    );
+    await screen.findByText("Enter code: ABCD-EFGH");
+    expect(
+      invoke.mock.calls.some((c) => c[1].action === "configure_github"),
+    ).toBe(false);
+  });
+  it("uses an OpenAI compatible model when GitHub is not connected", async () => {
+    invoke.mockImplementation((command, params) =>
+      params.action === "models"
+        ? {
+            connected: ["local"],
+            all: [
+              {
+                id: "local",
+                models: {
+                  test: { id: "endpoint:local/test", name: "Local / test" },
+                },
+              },
+            ],
+          }
+        : handler(command, params),
+    );
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "New issue" }));
+    const title = await screen.findByLabelText("Title");
+    await screen.findByRole("option", { name: "Local / test" });
+    fireEvent.change(title, { target: { value: "Local model issue" } });
+    fireEvent.submit(title.closest("form")!);
+    await waitFor(() =>
+      expect(
+        invoke.mock.calls.find((c) => c[1].action === "issue_create")?.[1].args
+          .model,
+      ).toBe("endpoint:local/test"),
+    );
   });
   it("invalidates an approval confirmation when the PR head changes", async () => {
     render(<App />);

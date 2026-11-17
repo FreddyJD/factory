@@ -1,10 +1,10 @@
-# Git Factory
+# factory
 
 Repository-first development with a native Rust agent harness. Code, Issues, Pull Requests, and History use a compact GitHub-style interface with Bootstrap 3-style controls recreated in CSS. No Bootstrap JavaScript or jQuery dependency.
 
 **MVP:** native Rust agent/tool loop, GitHub Copilot device onboarding, dynamic model selection, repository/multi-repository discovery, explicit empty-folder Git initialization, isolated task worktrees, coding sessions with tool approvals/questions, canvas journal and diff review, trusted MCP client connections, and separate ACP/MCP stdio CLI interfaces. Signed Windows releases remain enabled.
 
-Issues start bounded local execution immediately. Optional draft PR publication must be explicitly authorized and pass validation; no automatic merges or OS sandbox. This is not the million-agent distributed scheduler. A real Copilot subscription and human device authorization are required to run models. See [harness details and the full tool audit](docs/harness.md) and [protocol setup/limits](docs/protocols.md).
+Issues start bounded local execution immediately. Optional draft PR publication must be explicitly authorized and pass validation; no automatic merges or OS sandbox. This is not the million-agent distributed scheduler. Use a Copilot subscription or an OpenAI-compatible streaming/tool-calling endpoint. See [harness details and the full tool audit](docs/harness.md) and [protocol setup/limits](docs/protocols.md).
 
 ## Download
 
@@ -34,13 +34,23 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked --all-targets
 
 ## First Run
 
-No coding-runtime download or OpenCode executable is needed. Register a GitHub OAuth app with device flow enabled and enter its public client ID in Settings (or set `GIT_FACTORY_GITHUB_CLIENT_ID`). Direct Copilot HTTP inference is experimental/undocumented; a newly registered client is not guaranteed entitlement. Existing OpenCode credentials are not imported. App-update signature verification remains enabled and is unrelated to the removed OpenCode installer.
+No coding-runtime download or OpenCode executable is needed. In Settings, choose GitHub sign-in or add an OpenAI-compatible base URL, optional API key and exact model ID. GitHub sign-in uses the Roxy-compatible public device-flow client identity by default; an advanced client-ID override and `GIT_FACTORY_GITHUB_CLIENT_ID` remain available. Direct Copilot inference/shared client compatibility is experimental and may be restricted. The native adapter exchanges the GitHub OAuth credential for a short-lived Copilot token and honors its assigned inference host. Existing OpenCode credentials are not imported. App-update signature verification remains enabled.
 
-Start the app and open a repository or a parent folder of repositories. Code opens immediately without requiring inference authentication. Browse source or a registered worktree from the checkout selector; the live filesystem refreshes every two seconds while visible. Configure Copilot in Settings when ready to create an issue. New issue creates an isolated worktree and starts the native agent. The issue's conversation, tool activity, questions and approvals remain in its thread. Native file edits can be preauthorized in that issue; shell and external tools still require approval. Credentials stay Rust-side in the OS credential store.
+Start the app and open a repository or a parent folder of repositories. Code opens immediately without requiring inference authentication. Browse source or a registered worktree from the checkout selector; the live filesystem refreshes every two seconds while visible. Configure an inference provider in Settings when ready to create an issue. New issue creates an isolated worktree and starts the native agent. The issue's conversation, tool activity, questions and approvals remain in its thread. Native file edits can be preauthorized in that issue; shell and external tools still require approval. Credentials stay Rust-side in the OS credential store.
 
 Task worktrees and history survive restarts. Stop cancels a turn; Close worker releases a local slot without removing files. Four task workers may be open simultaneously. New code executes as your user, so only use trusted repositories, commands and MCP servers. Git content filters are disabled for Factory Git operations; LFS files remain pointers.
 
 Build the console integration executable with `cargo build --manifest-path src-tauri/Cargo.toml --bin factory-cli`. The Windows installer includes it beside the desktop executable. See [ACP/MCP setup](docs/protocols.md).
+
+## Local Review And Merge
+
+Pull Requests includes local completed issue reviews, even with no remote or GitHub CLI. Inspect the complete candidate diff, then explicitly confirm **Merge locally**. This commits the reviewed snapshot and fast-forwards the source checkout's currently reviewed local branch without pushing. The source must have no staged, unstaged or untracked changes; ignored-file collisions are preserved. Divergent history, submodules, sparse checkouts, hidden index flags and in-progress Git operations require manual integration. Both source HEAD and candidate content are rechecked. Recovery refs and uncertain outcomes are retained, never silently reset or retried.
+
+The application uses a cooperative repository-wide lease, not an OS lock against editors or other Git processes. Avoid external branch switching during integration. Local merge does not run validation automatically; inspect the issue's test evidence first.
+
+## Inference Providers
+
+OpenAI-compatible connections accept HTTPS base URLs, or HTTP on localhost only. Include the API prefix (`https://api.openai.com/v1`, `http://localhost:11434/v1`). API keys are optional for local servers and stored in macOS Keychain/Windows Credential Manager when supplied. Endpoint/model selection is retained per issue. Changing a destination or model requires a new connection to prevent redirecting retained history. Manual model IDs work without `/models`; the endpoint must implement streaming Chat Completions and function calls. Responses-only and Messages-only providers are not supported.
 
 ## Issues And Pull Requests
 
@@ -55,7 +65,7 @@ MCP in the sidebar persists trusted project server configuration; new issues con
 Normal pushes to `main` and pull requests run Windows/macOS CI without release secrets. Only stable `vMAJOR.MINOR.PATCH` tags publish Windows releases.
 
 ```sh
-npm run release:version -- 0.4.1
+npm run release:version -- 0.5.1
 npm run check
 git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json
 git commit -m "Release 0.4.1"

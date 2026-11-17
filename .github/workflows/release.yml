@@ -89,17 +89,19 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: Git Factory ${{ github.ref_name }}
+          releaseName: factory ${{ github.ref_name }}
           releaseBody: |
-            Git Factory Windows x64 MVP. Download the setup.exe installer below.
+            factory Windows x64 MVP. Download the setup.exe installer below.
 
-            Repository-first Code, Issues, Pull Requests and History; live checkout/worktree browsing; native Rust coding harness and ACP/MCP integrations. No OpenCode binary or coding-runtime download. Configure Factory's own GitHub OAuth client ID and complete device authorization. Direct Copilot HTTP inference is experimental and may be restricted. Draft PR publication requires explicit authorization and successful validation. Worktrees are not a security sandbox. Windows publisher signing is not configured yet, so SmartScreen may show a warning.
+            Repository-first Code, Issues, Pull Requests and History; live checkout/worktree browsing; native Rust coding harness and ACP/MCP integrations. Local completed-issue reviews and fast-forward merges need no remote. Connect GitHub using device sign-in or configure a streaming/tool-capable OpenAI-compatible endpoint. No external coding runtime. Direct Copilot/shared-client compatibility is experimental. Draft PR publication requires explicit authorization and successful validation. Worktrees are not a security sandbox. Windows publisher signing is not configured yet, so SmartScreen may show a warning.
           releaseDraft: true
           prerelease: false
           generateReleaseNotes: true
           updaterJsonPreferNsis: true
           uploadUpdaterSignatures: true
           args: --bundles nsis --config src-tauri/tauri.release.conf.json -- --locked
+      - name: Verify legacy Windows installation migration
+        run: ./scripts/test-windows-upgrade.ps1
       - name: Verify release completeness
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -114,4 +116,4 @@ jobs:
         shell: bash
         env:
           RELEASE_URL: ${{ steps.build.outputs.releaseHtmlUrl }}
-        run: echo "Download Git Factory at $RELEASE_URL" >> "$GITHUB_STEP_SUMMARY"
+        run: echo "Download factory at $RELEASE_URL" >> "$GITHUB_STEP_SUMMARY"

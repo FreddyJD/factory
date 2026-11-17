@@ -205,6 +205,33 @@ export async function previewApi(
       };
     case "models":
       return { all: [], connected: [] };
+    case "providers":
+      return [];
+    case "local_reviews":
+      return {
+        issues: tasks.slice(1).map((task) => ({
+          taskId: task.id,
+          projectId: project.id,
+          title: task.title,
+          outcome: "completed",
+          localMerge: null,
+        })),
+        github: false,
+      };
+    case "local_preview":
+      return {
+        taskId: args.taskId,
+        title: "Handle interrupted agent sessions",
+        branch: "factory/session-recovery",
+        sourceRef: "refs/heads/main",
+        sourceHead: "f040ca0a1234",
+        head: "f040ca0a1234",
+        tree: "abc123",
+        diff: "diff --git a/src/session.rs b/src/session.rs\n+recover_interrupted_session();",
+        mode: "fast-forward",
+        validation: "cargo test",
+        sourcePath: project.path,
+      };
     case "pr_list":
       return [];
     case "repository_history":

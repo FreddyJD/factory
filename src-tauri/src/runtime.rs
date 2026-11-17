@@ -1,4 +1,5 @@
 use crate::{
+    connections::Providers,
     issues::{self, Issue},
     mcp::{Connection, Connections},
     provider::{self, Copilot, Model, Provider},
@@ -263,17 +264,29 @@ pub struct Factory {
     admission: Mutex<()>,
     pub events: broadcast::Sender<Value>,
     pub copilot: Arc<Copilot>,
+    pub providers: Arc<Providers>,
     pub repositories: Repositories,
     provider: Provider,
 }
 impl Factory {
     pub fn new(root: PathBuf) -> Self {
         let copilot = Arc::new(Copilot::new(&root));
-        Self::with_provider(root, copilot.clone(), copilot)
+        let provider = Arc::new(Providers::new(&root, copilot.clone()));
+        Self::build(root, copilot, provider.clone(), provider)
     }
     pub fn with_provider(root: PathBuf, copilot: Arc<Copilot>, provider: Provider) -> Self {
+        let providers = Arc::new(Providers::new(&root, copilot.clone()));
+        Self::build(root, copilot, providers, provider)
+    }
+    fn build(
+        root: PathBuf,
+        copilot: Arc<Copilot>,
+        providers: Arc<Providers>,
+        provider: Provider,
+    ) -> Self {
         let (events, _) = broadcast::channel(1024);
         Self {
+            providers,
             repositories: Repositories::new(&root),
             root,
             sessions: Mutex::new(HashMap::new()),
@@ -301,7 +314,7 @@ impl Factory {
         self.copilot.login_finish(attempt).await
     }
     pub async fn models(&self) -> Result<Value> {
-        self.copilot.models().await
+        self.providers.models().await
     }
     pub fn workspace(&self, path: &Path) -> Result<Workspace> {
         workspace::discover(path)
@@ -391,7 +404,7 @@ impl Factory {
         if title.is_empty() || title.len() > 200 || body.len() > 90_000 {
             return Err("Issue title must be 1-200 bytes; description at most 90 KB".into());
         }
-        self.copilot.model(model).await?;
+        self.providers.model(model).await?;
         if self.sessions.lock().await.len() >= 4 {
             return Err(
                 "Four local execution slots are in use. Close a stopped issue first.".into(),
@@ -448,6 +461,26 @@ impl Factory {
         }
         Ok(self.worker(&task.id).await?.task.lock().await.clone())
     }
+    pub async fn local_review(
+        &self,
+        project_id: &str,
+        id: &str,
+        expected: Option<&Value>,
+    ) -> Result<Value> {
+        let session = self.worker(id).await?;
+        let _gate = session.lifecycle.lock().await;
+        if session.busy().await || session.closing.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("Stop the issue before reviewing or merging local changes".into());
+        }
+        let project = self.repositories.project(project_id).await?;
+        match expected {
+            Some(expected) => crate::local::merge(&self.root, &project, id, expected).await,
+            None => {
+                let _lease = crate::local::lease(&project.path).await?;
+                crate::local::preview(&self.root, &project, id).await
+            }
+        }
+    }
     pub async fn publish_issue(&self, id: &str, preview: &Value) -> Result<Value> {
         let session = self.worker(id).await?;
         let _gate = session.lifecycle.lock().await;
@@ -482,14 +515,14 @@ impl Factory {
         if self.sessions.lock().await.len() >= 4 {
             return Err("Four local execution slots are in use".into());
         }
-        self.copilot.model(model).await?;
+        self.providers.model(model).await?;
         let task = self.prepare(path, title, model).await?;
         self.prompt(&task.id, title).await?;
         Ok(self.worker(&task.id).await?.task.lock().await.clone())
     }
     pub async fn prompt(&self, id: &str, text: &str) -> Result<()> {
         let task = workspace::load_task(&self.root, id)?;
-        let model = self.copilot.model(&task.model).await?;
+        let model = self.providers.model(&task.model).await?;
         self.prompt_with_model(id, text, model).await
     }
     pub async fn prompt_with_model(&self, id: &str, text: &str, model: Model) -> Result<()> {
@@ -504,6 +537,9 @@ impl Factory {
         let mut turn = session.turn.lock().await;
         if session.busy().await {
             return Err("This task already has an active turn".into());
+        }
+        if issues::load(&self.root, id).is_ok_and(|issue| !issue.local_merge.is_null()) {
+            return Err("This issue has a local integration record. Create a new issue for additional changes.".into());
         }
         {
             let mut h = session.history.lock().await;

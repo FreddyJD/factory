@@ -126,12 +126,15 @@ export function NewIssue({
             </label>
           </div>
         </div>
-        {(catalog.error || !available.length) && (
+        {(catalog.error ||
+          !!catalog.value?.errors?.length ||
+          !available.length) && (
           <div className="alert alert-warning">
             {catalog.error ??
-              (catalog.loading
-                ? "Loading models…"
-                : "Connect Copilot to run this issue.")}{" "}
+              (catalog.value?.errors?.join("; ") ||
+                (catalog.loading
+                  ? "Loading models…"
+                  : "Connect GitHub or an OpenAI-compatible endpoint in Settings."))}{" "}
             <button className="link-button" type="button" onClick={onSettings}>
               Settings
             </button>

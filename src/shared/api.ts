@@ -72,6 +72,7 @@ export interface ProviderCatalog {
     >;
   }[];
   connected: string[];
+  errors?: string[];
 }
 export interface RuntimeStatus {
   engine: "native-rust";
@@ -103,10 +104,9 @@ export async function api<T>(
 }
 
 export function models(catalog: ProviderCatalog) {
-  return Object.values(
-    catalog.all.find((p) => p.id === "github-copilot")?.models ?? {},
-  )
-    .filter((m) => m.capabilities?.toolcall !== false)
+  return catalog.all
+    .flatMap((provider) => Object.values(provider.models))
+    .filter((model) => model.capabilities?.toolcall !== false)
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 

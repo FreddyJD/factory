@@ -45,6 +45,7 @@ export interface Issue {
   validation: string;
   outcome: string;
   stopReason: string;
+  localMerge?: { state: string; commit?: string; error?: string } | null;
   publication: {
     state?: string;
     url?: string;
