@@ -440,6 +440,84 @@ describe("repository-first application", () => {
       invoke.mock.calls.some((c) => c[1].action === "configure_github"),
     ).toBe(false);
   });
+  it("shows Responses and Messages models in the issue picker", async () => {
+    invoke.mockImplementation((command, params) =>
+      params.action === "models"
+        ? {
+            connected: ["github-copilot"],
+            all: [
+              {
+                id: "github-copilot",
+                models: {
+                  responses: {
+                    id: "responses-model",
+                    name: "Codex Responses",
+                    protocol: "responses",
+                    capabilities: { toolcall: true },
+                  },
+                  messages: {
+                    id: "claude-model",
+                    name: "Claude Messages",
+                    protocol: "messages",
+                    capabilities: { toolcall: true },
+                  },
+                  text: {
+                    id: "text-only",
+                    name: "Text only",
+                    capabilities: { toolcall: false },
+                  },
+                },
+              },
+            ],
+          }
+        : handler(command, params),
+    );
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "New issue" }));
+    await screen.findByRole("option", { name: "Codex Responses" });
+    await screen.findByRole("option", { name: "Claude Messages" });
+    expect(screen.queryByRole("option", { name: "Text only" })).toBeNull();
+  });
+  it("shows full catalog separately from coding capabilities", async () => {
+    invoke.mockImplementation((command, params) =>
+      params.action === "models"
+        ? {
+            connected: ["github-copilot"],
+            all: [
+              {
+                id: "github-copilot",
+                models: {
+                  responses: {
+                    id: "responses-model",
+                    name: "Codex Responses",
+                    protocol: "responses",
+                    capabilities: { toolcall: true },
+                  },
+                  messages: {
+                    id: "claude-model",
+                    name: "Claude Messages",
+                    protocol: "messages",
+                    capabilities: { toolcall: true },
+                  },
+                  text: {
+                    id: "text-only",
+                    name: "Text only",
+                    capabilities: { toolcall: false },
+                  },
+                },
+              },
+            ],
+          }
+        : handler(command, params),
+    );
+    render(<App />);
+    await screen.findByRole("button", { name: "README.md" });
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await screen.findByText(
+      "3 GitHub models available · 2 support coding tools",
+    );
+    expect(screen.getByText("Text only")).toBeTruthy();
+  });
   it("uses an OpenAI compatible model when GitHub is not connected", async () => {
     invoke.mockImplementation((command, params) =>
       params.action === "models"

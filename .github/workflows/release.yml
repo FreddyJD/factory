@@ -93,7 +93,7 @@ jobs:
           releaseBody: |
             factory Windows x64 MVP. Download the setup.exe installer below.
 
-            Repository-first Code, Issues, Pull Requests and History; live checkout/worktree browsing; native Rust coding harness and ACP/MCP integrations. Local completed-issue reviews and fast-forward merges need no remote. Connect GitHub using device sign-in or configure a streaming/tool-capable OpenAI-compatible endpoint. No external coding runtime. Direct Copilot/shared-client compatibility is experimental. Draft PR publication requires explicit authorization and successful validation. Worktrees are not a security sandbox. Windows publisher signing is not configured yet, so SmartScreen may show a warning.
+            Repository-first Code, Issues, Pull Requests and History; live checkout/worktree browsing; native Rust coding harness and ACP/MCP integrations. Local completed-issue reviews and fast-forward merges need no remote. Copilot now routes Chat Completions, Responses and Messages models natively, including Responses-only Codex models with preserved tool/reasoning continuation. Connect GitHub using device sign-in or configure a streaming/tool-capable OpenAI-compatible Chat Completions endpoint. No external coding runtime. Direct Copilot/shared-client compatibility is experimental. Draft PR publication requires explicit authorization and successful validation. Worktrees are not a security sandbox. Windows publisher signing is not configured yet, so SmartScreen may show a warning.
           releaseDraft: true
           prerelease: false
           generateReleaseNotes: true

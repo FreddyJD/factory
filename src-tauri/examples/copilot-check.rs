@@ -16,6 +16,20 @@ async fn main() -> Result<(), String> {
     let count = catalog["all"][0]["models"]
         .as_object()
         .map_or(0, |m| m.len());
-    println!("Copilot model discovery succeeded: {count} tool-capable Chat Completions models. No inference request sent.");
+    let mut coding = 0usize;
+    let mut protocols = std::collections::BTreeMap::<String, usize>::new();
+    for model in catalog["all"][0]["models"]
+        .as_object()
+        .into_iter()
+        .flat_map(|m| m.values())
+    {
+        if model["capabilities"]["toolcall"] == true {
+            coding += 1;
+        }
+        *protocols
+            .entry(model["protocol"].as_str().unwrap_or("unknown").into())
+            .or_default() += 1;
+    }
+    println!("Copilot model discovery succeeded: {count} enabled chat models ({coding} coding-capable), protocols: {protocols:?}. No inference request sent.");
     Ok(())
 }

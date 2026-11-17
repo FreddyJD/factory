@@ -1379,7 +1379,7 @@ dependencies = [
 
 [[package]]
 name = "git-factory"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "atomic-write-file",
  "base64 0.23.1",

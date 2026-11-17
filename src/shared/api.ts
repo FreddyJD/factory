@@ -68,7 +68,12 @@ export interface ProviderCatalog {
     id: string;
     models: Record<
       string,
-      { id: string; name: string; capabilities?: { toolcall?: boolean } }
+      {
+        id: string;
+        name: string;
+        protocol?: "chat" | "responses" | "messages";
+        capabilities?: { toolcall?: boolean };
+      }
     >;
   }[];
   connected: string[];

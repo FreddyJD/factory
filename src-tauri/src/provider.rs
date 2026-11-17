@@ -1,4 +1,7 @@
-use crate::workspace::Result;
+use crate::{
+    wire::{self, Protocol},
+    workspace::Result,
+};
 use futures_util::{future::BoxFuture, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -39,6 +42,7 @@ pub struct Completion {
     pub calls: Vec<ToolCall>,
     pub reason: String,
     pub opaque: Option<Value>,
+    pub state: Option<Value>,
 }
 
 pub trait Inference: Send + Sync {
@@ -68,14 +72,24 @@ struct Device {
     interval: u64,
 }
 
+#[derive(Clone, Debug)]
+struct CatalogModel {
+    model: Model,
+    protocol: Protocol,
+    output: usize,
+    tools: bool,
+}
+
 #[derive(Clone)]
 pub struct Copilot {
     root: PathBuf,
     client: reqwest::Client,
     device: Arc<Mutex<Option<Device>>>,
     credentials: Arc<Mutex<()>>,
-    catalog: Arc<Mutex<(String, Vec<Model>)>>,
+    catalog: Arc<Mutex<(String, Vec<CatalogModel>)>>,
     exchange: Arc<Mutex<Option<CopilotToken>>>,
+    catalog_gate: Arc<Mutex<()>>,
+    catalog_at: Arc<Mutex<Option<Instant>>>,
 }
 
 fn now() -> u64 {
@@ -141,6 +155,8 @@ impl Copilot {
             credentials: Arc::new(Mutex::new(())),
             catalog: Arc::new(Mutex::new((String::new(), Vec::new()))),
             exchange: Arc::new(Mutex::new(None)),
+            catalog_gate: Arc::new(Mutex::new(())),
+            catalog_at: Arc::new(Mutex::new(None)),
         }
     }
     fn entry(&self) -> Result<keyring::Entry> {
@@ -445,6 +461,13 @@ impl Copilot {
         .header("X-Request-Id", uuid::Uuid::new_v4().to_string())
     }
     pub async fn models(&self) -> Result<Value> {
+        let _gate = self.catalog_gate.lock().await;
+        // Clear first so failed/cancelled discovery cannot leave revoked models runnable.
+        *self.catalog.lock().await = (String::new(), Vec::new());
+        *self.catalog_at.lock().await = None;
+        self.discover_models().await
+    }
+    async fn discover_models(&self) -> Result<Value> {
         let (request, credential, used_token) =
             match self.request(reqwest::Method::GET, "/models").await {
                 Ok(request) => request,
@@ -469,15 +492,16 @@ impl Copilot {
             ));
         }
         let value: Value = response.json().await.map_err(|e| e.to_string())?;
-        let models = parse_models(&value);
+        let models = catalog_models(&value);
         if models.is_empty() {
-            return Err("Copilot returned no enabled chat-completions models supporting streaming and tools. Responses/Messages-only models are not supported by this adapter.".into());
+            return Err("Copilot returned no enabled streaming chat models using Chat Completions, Responses or Messages.".into());
         }
         if self.token().await? != credential {
             return Err("GitHub account changed during model discovery; refresh models".into());
         }
         *self.catalog.lock().await = (credential, models.clone());
-        let catalog: serde_json::Map<String,Value> = models.into_iter().map(|m|(m.id.clone(),json!({"id":m.id,"name":m.name,"context":m.context,"capabilities":{"toolcall":true}}))).collect();
+        *self.catalog_at.lock().await = Some(Instant::now());
+        let catalog: serde_json::Map<String,Value> = models.into_iter().map(|entry|{let m=entry.model;(m.id.clone(),json!({"id":m.id,"name":m.name,"context":m.context,"protocol":entry.protocol.label(),"capabilities":{"toolcall":entry.tools}}))}).collect();
         Ok(
             json!({"all":[{"id":"github-copilot","models":catalog}],"connected":["github-copilot"],"notice":NOTICE}),
         )
@@ -488,14 +512,33 @@ impl Copilot {
             cache.take();
         }
     }
-    pub async fn model(&self, id: &str) -> Result<Model> {
+    async fn catalog_entry(&self, id: &str) -> Result<CatalogModel> {
         let credential = self.token().await?;
         let stale = {
             let catalog = self.catalog.lock().await;
             catalog.0 != credential || catalog.1.is_empty()
         };
-        if stale {
-            self.models().await?;
+        let expired = self
+            .catalog_at
+            .lock()
+            .await
+            .is_none_or(|at| at.elapsed() > Duration::from_secs(60));
+        if stale || expired {
+            let _gate = self.catalog_gate.lock().await;
+            let stale = {
+                let catalog = self.catalog.lock().await;
+                catalog.0 != credential || catalog.1.is_empty()
+            };
+            let expired = self
+                .catalog_at
+                .lock()
+                .await
+                .is_none_or(|at| at.elapsed() > Duration::from_secs(60));
+            if stale || expired {
+                *self.catalog.lock().await = (String::new(), Vec::new());
+                *self.catalog_at.lock().await = None;
+                self.discover_models().await?;
+            }
         }
         let catalog = self.catalog.lock().await;
         if catalog.0 != credential {
@@ -504,9 +547,29 @@ impl Copilot {
         catalog
             .1
             .iter()
-            .find(|model| model.id == id)
+            .find(|entry| entry.model.id == id)
             .cloned()
-            .ok_or("Select an available Copilot chat model".into())
+            .ok_or("Select a model available to your Copilot account".into())
+    }
+    async fn confirm_catalog(&self, credential: &str, entry: &CatalogModel) -> Result<()> {
+        let catalog = self.catalog.lock().await;
+        if catalog.0 != credential {
+            return Err(
+                "Model discovery failed or GitHub account changed; refresh model selection".into(),
+            );
+        }
+        if !catalog.1.iter().any(|current| {
+            current.model.id == entry.model.id
+                && current.protocol == entry.protocol
+                && current.tools == entry.tools
+                && current.output == entry.output
+        }) {
+            return Err("Copilot model capabilities changed; refresh selection".into());
+        }
+        Ok(())
+    }
+    pub async fn model(&self, id: &str) -> Result<Model> {
+        Ok(self.catalog_entry(id).await?.model)
     }
 }
 
@@ -537,32 +600,66 @@ fn credential(value: &Value, client_id: &str) -> Result<Credential> {
         expires_at: value["expires_in"].as_u64().map(|seconds| now() + seconds),
     })
 }
-pub fn parse_models(value: &Value) -> Vec<Model> {
+fn catalog_models(value: &Value) -> Vec<CatalogModel> {
+    let mut ids = std::collections::HashSet::new();
     value["data"]
         .as_array()
         .into_iter()
         .flatten()
-        .filter(|m| {
-            (m["model_picker_enabled"] == true
-                || m["model_picker_category"].is_string()
-                || m["policy"]["state"] == "enabled")
-                && m["policy"]["state"].as_str().is_none_or(|s| s == "enabled")
-                && m.get("supported_endpoints").is_none_or(|e| {
-                    e.as_array()
-                        .is_some_and(|e| e.iter().any(|e| e == "/chat/completions"))
-                })
-                && m["capabilities"]["supports"]["streaming"] != false
-                && m["capabilities"]["supports"]["tool_calls"] == true
-        })
         .filter_map(|m| {
-            Some(Model {
-                id: m["id"].as_str()?.into(),
-                name: m["name"].as_str()?.into(),
-                context: m["capabilities"]["limits"]["max_prompt_tokens"]
-                    .as_u64()
-                    .unwrap_or(32_000) as usize,
+            let id = m["id"]
+                .as_str()
+                .filter(|id| !id.is_empty() && id.len() <= 200)?;
+            if m["capabilities"]["type"]
+                .as_str()
+                .is_some_and(|kind| kind != "chat")
+                || m["capabilities"]["supports"]["streaming"] == false
+                || m["policy"]["state"]
+                    .as_str()
+                    .is_some_and(|state| state != "enabled")
+            {
+                return None;
+            }
+            if !(m["model_picker_enabled"] == true
+                || m["model_picker_category"]
+                    .as_str()
+                    .is_some_and(|s| !s.trim().is_empty())
+                || m["policy"]["state"] == "enabled"
+                || m["is_chat_default"] == true)
+            {
+                return None;
+            }
+            let protocol = Protocol::select(m)?;
+            if !ids.insert(id.to_string()) {
+                return None;
+            }
+            let limits = &m["capabilities"]["limits"];
+            let output = limits["max_output_tokens"]
+                .as_u64()
+                .unwrap_or(8192)
+                .clamp(1, 8192) as usize;
+            let context = limits["max_prompt_tokens"]
+                .as_u64()
+                .or_else(|| limits["max_context_window_tokens"].as_u64())
+                .unwrap_or(32_000)
+                .clamp(1024, 2_000_000) as usize;
+            Some(CatalogModel {
+                model: Model {
+                    id: id.into(),
+                    name: m["name"].as_str().unwrap_or(id).into(),
+                    context,
+                },
+                protocol,
+                output,
+                tools: m["capabilities"]["supports"]["tool_calls"] == true,
             })
         })
+        .collect()
+}
+pub fn parse_models(value: &Value) -> Vec<Model> {
+    catalog_models(value)
+        .into_iter()
+        .map(|entry| entry.model)
         .collect()
 }
 
@@ -646,6 +743,12 @@ impl StreamDecoder {
         }
         Ok(deltas)
     }
+    pub fn end(&mut self) -> Result<Vec<String>> {
+        if self.buffer.is_empty() || self.done {
+            return Ok(vec![]);
+        }
+        self.push(b"\n")
+    }
     pub fn is_done(&self) -> bool {
         self.done
     }
@@ -658,8 +761,12 @@ impl StreamDecoder {
             if call.id.is_empty() || call.name.is_empty() || !ids.insert(&call.id) {
                 return Err("Invalid or duplicated tool call ID".into());
             }
-            serde_json::from_str::<Value>(&call.arguments)
-                .map_err(|_| "Tool arguments are not complete JSON")?;
+            if !serde_json::from_str::<Value>(&call.arguments)
+                .map_err(|_| "Tool arguments are not complete JSON")?
+                .is_object()
+            {
+                return Err("Tool arguments must be a JSON object".into());
+            }
         }
         if !self.calls.is_empty() && self.reason.as_deref() != Some("tool_calls") {
             return Err("Provider did not finish its tool-call response".into());
@@ -669,6 +776,7 @@ impl StreamDecoder {
             calls: self.calls.into_values().collect(),
             reason: self.reason.unwrap(),
             opaque: self.opaque,
+            state: None,
         })
     }
 }
@@ -684,15 +792,30 @@ impl Inference for Copilot {
         deltas: mpsc::Sender<String>,
     ) -> BoxFuture<'a, Result<Completion>> {
         Box::pin(async move {
-            let (request, _credential, used_token) = self
-                .request(reqwest::Method::POST, "/chat/completions")
+            let entry = self.catalog_entry(model).await?;
+            let catalog_guard = self.catalog_gate.lock().await;
+            if !entry.tools && !tools.is_empty() {
+                return Err(
+                    "This catalog model explicitly does not support coding tool calls".into(),
+                );
+            }
+            let payload = wire::body(entry.protocol, model, &messages, &tools, entry.output)?;
+            let (request, credential, used_token) = self
+                .request(reqwest::Method::POST, entry.protocol.path())
                 .await?;
-            let request = request
+            self.confirm_catalog(&credential, &entry).await?;
+            drop(catalog_guard);
+            let mut request = request
                 .header("x-initiator", initiator)
                 .header("X-Interaction-Id", uuid::Uuid::new_v4().to_string())
-                .json(&json!({"model":model,"messages":messages,"tools":tools,"stream":true}))
+                .json(&payload)
                 .timeout(Duration::from_secs(300));
-            let response = tokio::select! {_ = cancel.cancelled()=>return Err("Cancelled".into()), response=request.send()=>response.map_err(|e|e.to_string())?};
+            if matches!(entry.protocol, Protocol::Messages | Protocol::MessagesV1) {
+                request = request
+                    .header("anthropic-version", "2023-06-01")
+                    .header("anthropic-beta", "interleaved-thinking-2025-05-14");
+            }
+            let response = tokio::select! {biased;_ = cancel.cancelled()=>return Err("Cancelled".into()),response=request.send()=>response.map_err(|_|"Copilot inference connection failed")?};
             if response.status() == reqwest::StatusCode::UNAUTHORIZED {
                 self.invalidate(&used_token).await;
             }
@@ -702,16 +825,58 @@ impl Inference for Copilot {
                     response_error("inference", response.status(), response.headers())
                 ));
             }
-            let mut stream = response.bytes_stream();
-            let mut decoder = StreamDecoder::default();
-            loop {
-                tokio::select! { biased; _ = cancel.cancelled()=>return Err("Cancelled".into()), chunk=stream.next()=>match chunk { Some(chunk)=>for delta in decoder.push(&chunk.map_err(|e|e.to_string())?)? { let _=deltas.send(delta).await; }, None=>break }}
-                if decoder.is_done() {
-                    break;
-                }
-            }
-            decoder.finish()
+            read_completion(response, entry.protocol, model, cancel, deltas).await
         })
+    }
+}
+
+pub async fn read_completion(
+    response: reqwest::Response,
+    protocol: Protocol,
+    model: &str,
+    cancel: CancellationToken,
+    deltas: mpsc::Sender<String>,
+) -> Result<Completion> {
+    let mut stream = response.bytes_stream();
+    let mut chat = StreamDecoder::default();
+    let mut native = wire::Decoder::new(protocol, model);
+    loop {
+        let chunk = tokio::select! {biased;_ = cancel.cancelled()=>return Err("Cancelled".into()),chunk=stream.next()=>chunk};
+        let Some(chunk) = chunk else {
+            break;
+        };
+        let chunk = chunk.map_err(|_| "Inference stream disconnected; no tools executed")?;
+        let text = if protocol == Protocol::Chat {
+            chat.push(&chunk)?
+        } else {
+            native.push(&chunk)?
+        };
+        for text in text {
+            tokio::select! {biased;_ = cancel.cancelled()=>return Err("Cancelled".into()),result=deltas.send(text)=>{let _=result;}}
+        }
+        if if protocol == Protocol::Chat {
+            chat.is_done()
+        } else {
+            native.done()
+        } {
+            break;
+        }
+    }
+    let trailing = if protocol == Protocol::Chat {
+        chat.end()?
+    } else {
+        native.end()?
+    };
+    for text in trailing {
+        tokio::select! {biased;_ = cancel.cancelled()=>return Err("Cancelled".into()),result=deltas.send(text)=>{let _=result;}}
+    }
+    if cancel.is_cancelled() {
+        return Err("Cancelled".into());
+    }
+    if protocol == Protocol::Chat {
+        chat.finish()
+    } else {
+        native.finish()
     }
 }
 
@@ -920,12 +1085,84 @@ mod tests {
         assert_eq!(split.finish().unwrap().text, "ok");
     }
     #[test]
-    fn models_accept_optional_streaming_metadata_but_not_responses_only() {
+    fn models_accept_optional_streaming_metadata() {
         let value = json!({"data":[{"id":"chat","name":"Chat","policy":{"state":"enabled"},"capabilities":{"supports":{"tool_calls":true}}}]});
         assert_eq!(parse_models(&value).len(), 1);
     }
+    #[tokio::test]
+    async fn inference_catalog_validation_waits_for_refresh() {
+        let provider = Copilot::new(Path::new("/unused-test"));
+        let entry = CatalogModel {
+            model: Model {
+                id: "fixture".into(),
+                name: "Fixture".into(),
+                context: 32_000,
+            },
+            protocol: Protocol::Responses,
+            output: 8192,
+            tools: true,
+        };
+        let gate = provider.catalog_gate.lock().await;
+        *provider.catalog.lock().await = (String::new(), vec![]);
+        let owner = provider.clone();
+        let expected = entry.clone();
+        let mut check = tokio::spawn(async move {
+            let _gate = owner.catalog_gate.lock().await;
+            owner.confirm_catalog("credential", &expected).await
+        });
+        assert!(tokio::time::timeout(Duration::from_millis(10), &mut check)
+            .await
+            .is_err());
+        *provider.catalog.lock().await = ("credential".into(), vec![entry.clone()]);
+        drop(gate);
+        assert!(check.await.unwrap().is_ok());
+        *provider.catalog.lock().await = (String::new(), vec![]);
+        assert!(provider
+            .confirm_catalog("credential", &entry)
+            .await
+            .is_err());
+    }
     #[test]
-    fn catalog_excludes_unsupported_endpoints() {
-        assert!(parse_models(&json!({"data":[{"id":"x","name":"x","model_picker_enabled":true,"supported_endpoints":["/responses"],"capabilities":{"supports":{"streaming":true,"tool_calls":true}}}]})).is_empty());
+    fn catalog_routes_all_account_coding_families_and_rejects_nonchat_disabled() {
+        let mut data = Vec::new();
+        for (id, endpoints) in [
+            ("chat", json!(["/chat/completions"])),
+            ("responses", json!(["/responses"])),
+            ("claude", json!(["/v1/messages"])),
+            ("messages", json!(["/messages"])),
+        ] {
+            data.push(json!({"id":id,"name":id,"model_picker_enabled":true,"supported_endpoints":endpoints,"capabilities":{"type":"chat","supports":{"tool_calls":true},"limits":{"max_prompt_tokens":100_000,"max_output_tokens":4096}}}));
+        }
+        data.push(json!({"id":"disabled","model_picker_enabled":true,"policy":{"state":"disabled"},"capabilities":{"type":"chat","supports":{"tool_calls":true}}}));
+        data.push(json!({"id":"embedding","model_picker_enabled":true,"capabilities":{"type":"embeddings"}}));
+        data.push(json!({"id":"unknown","model_picker_enabled":true,"supported_endpoints":["/future-protocol"]}));
+        let entries = catalog_models(&json!({"data":data}));
+        assert_eq!(entries.len(), 4);
+        for entry in entries {
+            assert!(entry.tools);
+            assert_eq!(entry.model.context, 100_000);
+            assert_eq!(entry.output, 4096);
+            assert_eq!(
+                entry.protocol.label(),
+                match entry.model.id.as_str() {
+                    "chat" => "chat",
+                    "responses" => "responses",
+                    _ => "messages",
+                }
+            );
+        }
+        for value in [Value::Bool(true), Value::Bool(false), Value::Null] {
+            let entries = catalog_models(
+                &json!({"data":[{"id":"x","model_picker_enabled":true,"capabilities":{"type":"chat","supports":{"tool_calls":value}}}]}),
+            );
+            assert_eq!(entries[0].tools, value == true);
+        }
+        assert!(
+            catalog_models(&json!({"data":[{"id":"x","model_picker_category":"  "}]})).is_empty()
+        );
+    }
+    #[test]
+    fn catalog_includes_responses_only_models() {
+        assert_eq!(parse_models(&json!({"data":[{"id":"x","name":"x","model_picker_enabled":true,"supported_endpoints":["/responses"],"capabilities":{"supports":{"streaming":true,"tool_calls":true}}}]})).len(),1);
     }
 }

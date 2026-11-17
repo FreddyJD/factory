@@ -50,7 +50,7 @@ The application uses a cooperative repository-wide lease, not an OS lock against
 
 ## Inference Providers
 
-OpenAI-compatible connections accept HTTPS base URLs, or HTTP on localhost only. Include the API prefix (`https://api.openai.com/v1`, `http://localhost:11434/v1`). API keys are optional for local servers and stored in macOS Keychain/Windows Credential Manager when supplied. Endpoint/model selection is retained per issue. Changing a destination or model requires a new connection to prevent redirecting retained history. Manual model IDs work without `/models`; the endpoint must implement streaming Chat Completions and function calls. Responses-only and Messages-only providers are not supported.
+OpenAI-compatible connections accept HTTPS base URLs, or HTTP on localhost only. Include the API prefix (`https://api.openai.com/v1`, `http://localhost:11434/v1`). API keys are optional for local servers and stored in macOS Keychain/Windows Credential Manager when supplied. Endpoint/model selection is retained per issue. Changing a destination or model requires a new connection to prevent redirecting retained history. Manual model IDs work without `/models`; the endpoint must implement streaming Chat Completions and function calls. Manual compatible endpoints currently use Chat Completions. GitHub Copilot additionally supports native Responses and Messages APIs, with account-advertised routing and preserved reasoning/tool continuation. Settings lists the full eligible account catalog and distinguishes coding-tool capability.
 
 ## Issues And Pull Requests
 
@@ -65,7 +65,7 @@ MCP in the sidebar persists trusted project server configuration; new issues con
 Normal pushes to `main` and pull requests run Windows/macOS CI without release secrets. Only stable `vMAJOR.MINOR.PATCH` tags publish Windows releases.
 
 ```sh
-npm run release:version -- 0.5.1
+npm run release:version -- 0.6.1
 npm run check
 git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json
 git commit -m "Release 0.4.1"

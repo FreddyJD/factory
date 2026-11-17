@@ -286,7 +286,7 @@ impl Inference for Providers {
                 return Err("Provider model changed; execution stopped".into());
             }
             let base = base_url(&endpoint.base_url)?;
-            let mut request=self.client.post(format!("{base}/chat/completions")).json(&json!({"model":model,"messages":messages,"tools":tools,"tool_choice":"auto","stream":true})).timeout(Duration::from_secs(300));
+            let mut request=self.client.post(format!("{base}/chat/completions")).json(&json!({"model":model,"messages":crate::wire::chat_messages(&messages,false),"tools":tools,"tool_choice":"auto","stream":true})).timeout(Duration::from_secs(300));
             if endpoint.has_key {
                 request = request.bearer_auth(
                     self.key(id)?

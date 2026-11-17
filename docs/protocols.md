@@ -82,6 +82,6 @@ Active connections are native-session-local. The repository UI can persist expli
 
 ## Limits
 
-Configure inference in desktop Settings: GitHub device sign-in or an OpenAI-compatible endpoint. GitHub uses the experimental Roxy-compatible shared public client identity unless overridden. Direct Copilot inference remains undocumented. Only Chat Completions tool-capable models are supported. Endpoint model selections use `endpoint:CONNECTION_ID/MODEL_ID`.
+Configure inference in desktop Settings: GitHub device sign-in or an OpenAI-compatible endpoint. GitHub uses the experimental Roxy-compatible shared public client identity unless overridden. Direct Copilot inference remains undocumented. Copilot supports native Chat Completions, Responses and Messages transports according to its account catalog; coding runs require advertised tool support. Manually configured OpenAI-compatible endpoints remain Chat Completions. Endpoint model selections use `endpoint:CONNECTION_ID/MODEL_ID`.
 
 No remote ACP hosting, network-accessible Factory API, editor certification, distributed scheduling, or unattended approvals in this MVP. Desktop and CLI share task records and ownership locks, not one live central daemon. Close an owner before transferring the task to another execution surface.

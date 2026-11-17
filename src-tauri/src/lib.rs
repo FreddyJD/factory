@@ -7,6 +7,7 @@ pub mod provider;
 pub mod repository;
 pub mod runtime;
 pub mod tools;
+pub mod wire;
 pub mod workspace;
 
 use serde::Serialize;

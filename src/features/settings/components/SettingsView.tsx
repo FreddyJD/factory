@@ -29,6 +29,13 @@ export function SettingsView({
   const catalog = useResource<ProviderCatalog>("settings-models", () =>
     api("models"),
   );
+  const githubModels = Object.values(
+    catalog.value?.all.find((provider) => provider.id === "github-copilot")
+      ?.models ?? {},
+  );
+  const codingModels = githubModels.filter(
+    (model) => model.capabilities?.toolcall === true,
+  );
   async function action(operation: () => Promise<void>) {
     if (operationGate.current) return;
     operationGate.current = true;
@@ -130,10 +137,28 @@ export function SettingsView({
           )}
           <p className="muted">
             {catalog.value?.connected.includes("github-copilot")
-              ? `${catalog.value.all.find((p) => p.id === "github-copilot") ? Object.keys(catalog.value.all.find((p) => p.id === "github-copilot")!.models).length : 0} GitHub models available`
+              ? `${githubModels.length} GitHub models available · ${codingModels.length} support coding tools`
               : (catalog.error ??
                 (catalog.value?.errors?.join("; ") || "Not connected"))}
           </p>
+          {!!githubModels.length && (
+            <details className="provider-advanced">
+              <summary>Available models</summary>
+              <ul>
+                {githubModels.map((model) => (
+                  <li key={model.id}>
+                    {model.name}{" "}
+                    <span className="muted">
+                      {model.protocol ?? "chat"}
+                      {model.capabilities?.toolcall === true
+                        ? ""
+                        : " · no coding tools advertised"}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
         </div>
       </div>
       <ProviderSettings onRefresh={onRefresh} />
