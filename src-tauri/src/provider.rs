@@ -85,6 +85,48 @@ fn now() -> u64 {
         .as_secs()
 }
 
+// Copilot validates the editor integration profile on exchange and inference requests.
+// This profile matches Roxy's direct HTTP adapter, including model discovery.
+fn editor_request(request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    request
+        .header("User-Agent", "GitHubCopilotChat/0.26.7")
+        .header("Editor-Version", "vscode/1.99.3")
+        .header("Editor-Plugin-Version", "copilot-chat/0.26.7")
+        .header("Copilot-Integration-Id", "vscode-chat")
+        .header("Accept", "application/json")
+}
+
+fn response_error(
+    stage: &str,
+    status: reqwest::StatusCode,
+    headers: &reqwest::header::HeaderMap,
+) -> String {
+    let recovery=match status.as_u16(){
+        400|422=>"Copilot rejected the request format or client headers. This does not establish an account-entitlement problem.",
+        401=>"The saved authorization was rejected. Reconnect GitHub in Settings.",
+        403=>"Copilot denied access. Check your subscription and organization policies.",
+        429=>"Copilot is rate limiting requests. Wait before trying again.",
+        500..=599=>"Copilot is temporarily unavailable. Try again later.",
+        _=>"Copilot could not complete the request. Try checking the connection again.",
+    };
+    // Provider error bodies can echo credentials or prompts; never expose them.
+    let request_id = headers
+        .get("x-request-id")
+        .or_else(|| headers.get("x-github-request-id"))
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| {
+            !value.is_empty()
+                && value.len() <= 100
+                && value
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || b"-_:".contains(&c))
+        });
+    let reference = request_id
+        .map(|id| format!(" Request ID: {id}."))
+        .unwrap_or_default();
+    format!("Copilot {stage}: HTTP {status}. {recovery}{reference}")
+}
+
 impl Copilot {
     pub fn new(root: &Path) -> Self {
         Self {
@@ -328,25 +370,21 @@ impl Copilot {
             .is_some_and(|c| c.oauth == oauth && Instant::now() < c.renew)
         {
             let started = Instant::now();
-            let response = self
-                .client
-                .get("https://api.github.com/copilot_internal/v2/token")
-                .header("Authorization", format!("token {oauth}"))
-                .header("Accept", "application/json")
-                .header(
-                    "Editor-Version",
-                    concat!("factory/", env!("CARGO_PKG_VERSION")),
-                )
-                .header(
-                    "Editor-Plugin-Version",
-                    concat!("factory/", env!("CARGO_PKG_VERSION")),
-                )
-                .timeout(Duration::from_secs(30))
-                .send()
-                .await
-                .map_err(|_| "Copilot token exchange could not connect")?;
+            let response = editor_request(
+                self.client
+                    .get("https://api.github.com/copilot_internal/v2/token")
+                    .header("Authorization", format!("token {oauth}")),
+            )
+            .timeout(Duration::from_secs(30))
+            .send()
+            .await
+            .map_err(|_| "Copilot token exchange could not connect")?;
             if !response.status().is_success() {
-                return Err(format!("Copilot access: HTTP {}. Sign in again or check your subscription and organization policy.",response.status()));
+                return Err(response_error(
+                    "token exchange",
+                    response.status(),
+                    response.headers(),
+                ));
             }
             let value: Value = response
                 .json()
@@ -378,30 +416,33 @@ impl Copilot {
         }
         let access = cache.as_ref().unwrap();
         Ok((
-            self.client
-                .request(method, format!("{}{path}", access.base))
-                .bearer_auth(&access.token)
-                .header("X-GitHub-Api-Version", "2026-01-09")
-                .header(
-                    "Editor-Version",
-                    concat!("factory/", env!("CARGO_PKG_VERSION")),
-                )
-                .header(
-                    "Editor-Plugin-Version",
-                    concat!("factory/", env!("CARGO_PKG_VERSION")),
-                )
-                .header(
-                    "Openai-Intent",
-                    if path == "/models" {
-                        "model-access"
-                    } else {
-                        "conversation-panel"
-                    },
-                )
-                .header("X-Request-Id", uuid::Uuid::new_v4().to_string()),
+            self.api_request(method, path, access),
             access.oauth.clone(),
             access.token.clone(),
         ))
+    }
+    fn api_request(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        access: &CopilotToken,
+    ) -> reqwest::RequestBuilder {
+        editor_request(
+            self.client
+                .request(method, format!("{}{path}", access.base)),
+        )
+        .bearer_auth(&access.token)
+        .header("Content-Type", "application/json")
+        .header("X-GitHub-Api-Version", "2026-01-09")
+        .header(
+            "Openai-Intent",
+            if path == "/models" {
+                "model-access"
+            } else {
+                "conversation-panel"
+            },
+        )
+        .header("X-Request-Id", uuid::Uuid::new_v4().to_string())
     }
     pub async fn models(&self) -> Result<Value> {
         let (request, credential, used_token) =
@@ -421,7 +462,11 @@ impl Copilot {
             self.invalidate(&used_token).await;
         }
         if !response.status().is_success() {
-            return Err(format!("Copilot model discovery: HTTP {}. Your OAuth app/account may not be entitled to this undocumented API.",response.status()));
+            return Err(response_error(
+                "model discovery",
+                response.status(),
+                response.headers(),
+            ));
         }
         let value: Value = response.json().await.map_err(|e| e.to_string())?;
         let models = parse_models(&value);
@@ -652,7 +697,10 @@ impl Inference for Copilot {
                 self.invalidate(&used_token).await;
             }
             if !response.status().is_success() {
-                return Err(format!("Copilot inference HTTP {}. Check entitlement, organization policy, quota, and API compatibility. No request was retried.",response.status()));
+                return Err(format!(
+                    "{} No inference request was retried.",
+                    response_error("inference", response.status(), response.headers())
+                ));
             }
             let mut stream = response.bytes_stream();
             let mut decoder = StreamDecoder::default();
@@ -672,6 +720,142 @@ pub type Provider = Arc<dyn Inference>;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn token_exchange_and_inference_share_roxy_editor_profile() {
+        let provider = Copilot::new(Path::new("/unused-test"));
+        let exchange = editor_request(
+            provider
+                .client
+                .get("https://api.github.com/copilot_internal/v2/token")
+                .header("Authorization", "token oauth-fixture"),
+        )
+        .build()
+        .unwrap();
+        let access = CopilotToken {
+            oauth: "oauth-fixture".into(),
+            token: "copilot-fixture".into(),
+            base: "https://api.enterprise.githubcopilot.com".into(),
+            renew: Instant::now() + Duration::from_secs(60),
+        };
+        let inference = provider
+            .api_request(reqwest::Method::POST, "/chat/completions", &access)
+            .build()
+            .unwrap();
+        for request in [&exchange, &inference] {
+            assert_eq!(request.headers()["user-agent"], "GitHubCopilotChat/0.26.7");
+            assert_eq!(request.headers()["editor-version"], "vscode/1.99.3");
+            assert_eq!(
+                request.headers()["editor-plugin-version"],
+                "copilot-chat/0.26.7"
+            );
+            assert_eq!(request.headers()["copilot-integration-id"], "vscode-chat");
+            assert_eq!(request.headers()["accept"], "application/json");
+        }
+        assert_eq!(exchange.headers()["authorization"], "token oauth-fixture");
+        assert_eq!(
+            inference.headers()["authorization"],
+            "Bearer copilot-fixture"
+        );
+        assert_eq!(inference.headers()["openai-intent"], "conversation-panel");
+        assert_eq!(
+            inference.url().host_str(),
+            Some("api.enterprise.githubcopilot.com")
+        );
+    }
+
+    #[tokio::test]
+    async fn model_discovery_sends_required_headers_to_assigned_host() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut received = Vec::new();
+            let mut buffer = [0; 2048];
+            loop {
+                let count = socket.read(&mut buffer).await.unwrap();
+                assert!(count > 0);
+                received.extend_from_slice(&buffer[..count]);
+                assert!(received.len() < 16384);
+                if received.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let request = String::from_utf8(received).unwrap().to_ascii_lowercase();
+            assert!(request.starts_with("get /models http/1.1\r\n"));
+            for header in [
+                "user-agent: githubcopilotchat/0.26.7",
+                "editor-version: vscode/1.99.3",
+                "editor-plugin-version: copilot-chat/0.26.7",
+                "copilot-integration-id: vscode-chat",
+                "accept: application/json",
+                "content-type: application/json",
+                "openai-intent: model-access",
+                "x-github-api-version: 2026-01-09",
+                "authorization: bearer copilot-fixture",
+            ] {
+                assert!(
+                    request.lines().any(|line| line == header),
+                    "Missing {header}"
+                );
+            }
+            assert!(!request.contains("oauth-fixture"));
+            let body=json!({"data":[{"id":"fixture-chat","name":"Fixture","model_picker_enabled":true,"capabilities":{"type":"chat","supports":{"tool_calls":true}}}]}).to_string();
+            socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
+        });
+        let provider = Copilot::new(Path::new("/unused-test"));
+        let access = CopilotToken {
+            oauth: "oauth-fixture".into(),
+            token: "copilot-fixture".into(),
+            base: format!("http://{address}"),
+            renew: Instant::now() + Duration::from_secs(60),
+        };
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            provider
+                .api_request(reqwest::Method::GET, "/models", &access)
+                .send(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(result.status().is_success());
+        assert_eq!(
+            parse_models(&result.json::<Value>().await.unwrap())[0].id,
+            "fixture-chat"
+        );
+        server.await.unwrap();
+    }
+
+    #[test]
+    fn request_errors_are_not_reported_as_entitlement_failures() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert("x-request-id", "request-123".parse().unwrap());
+        let error = response_error(
+            "model discovery",
+            reqwest::StatusCode::BAD_REQUEST,
+            &headers,
+        );
+        assert!(error.contains("Request ID: request-123"));
+        assert!(error.contains("request format or client headers"));
+        assert!(!error.contains("may not be entitled"));
+        assert!(!error.contains("private provider body"));
+        for (status, recovery) in [
+            (401, "Reconnect GitHub"),
+            (403, "subscription"),
+            (429, "rate limiting"),
+            (503, "temporarily unavailable"),
+        ] {
+            assert!(response_error(
+                "model discovery",
+                reqwest::StatusCode::from_u16(status).unwrap(),
+                &headers
+            )
+            .contains(recovery));
+        }
+    }
+
     #[test]
     fn fragmented_utf8_and_calls_are_assembled_only_on_complete() {
         let input="data: {\"choices\":[{\"delta\":{\"content\":\"caf\u{e9}\",\"tool_calls\":[{\"index\":0,\"id\":\"call1\",\"function\":{\"name\":\"read\",\"arguments\":\"{\\\"filePath\\\":\"}}]}}]}\n\ndata: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"a\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n";
