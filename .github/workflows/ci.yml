@@ -39,5 +39,7 @@ jobs:
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml --locked --all-targets
+      - run: cargo build --manifest-path src-tauri/Cargo.toml --locked --bin factory-cli
+      - run: node scripts/protocol-smoke.mjs
       - name: Build desktop executable without signing
         run: npm run tauri build -- --debug --no-bundle -- --locked

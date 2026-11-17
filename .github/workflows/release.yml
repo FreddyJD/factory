@@ -62,6 +62,9 @@ jobs:
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml --locked --all-targets
+      - run: cargo build --manifest-path src-tauri/Cargo.toml --locked --bin factory-cli
+      - run: node scripts/protocol-smoke.mjs
+      - run: cargo build --manifest-path src-tauri/Cargo.toml --locked --release --bin factory-cli
       - name: Require the updater signing key
         shell: bash
         env:
@@ -82,15 +85,15 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: Git Factory ${{ github.ref_name }}
           releaseBody: |
-            Windows x64 foundation release. Download the setup.exe installer below.
+            Git Factory Windows x64 MVP. Download the setup.exe installer below.
 
-            Signed in-app updates are enabled. Windows publisher signing is not configured yet, so SmartScreen may show a warning. GitHub sign-in and agent execution are not implemented in this foundation.
+            Copilot onboarding, isolated Git worktrees, OpenCode coding harness, canvas worklist, and ACP/MCP integrations. Complete GitHub device authorization in the app to run models. Worktrees are not a security sandbox. Windows publisher signing is not configured yet, so SmartScreen may show a warning.
           releaseDraft: true
           prerelease: false
           generateReleaseNotes: true
           updaterJsonPreferNsis: true
           uploadUpdaterSignatures: true
-          args: --bundles nsis -- --locked
+          args: --bundles nsis --config src-tauri/tauri.release.conf.json -- --locked
       - name: Verify release completeness
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

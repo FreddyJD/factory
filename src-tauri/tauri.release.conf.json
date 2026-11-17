@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "resources": {
+      "target/release/factory-cli.exe": "factory-cli.exe",
+      "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md"
+    }
+  }
+}

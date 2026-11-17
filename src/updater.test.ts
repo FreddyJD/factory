@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tauri-apps/api/core")>()),
+  invoke: vi.fn().mockResolvedValue(true),
+}));
 import type { Update } from "@tauri-apps/plugin-updater";
 import { UpdateController, type UpdateState } from "./updater";
 
@@ -14,7 +18,10 @@ function fixture() {
     relaunch: vi.fn().mockResolvedValue(undefined),
   };
   const states: UpdateState[] = [];
-  const controller = new UpdateController((state) => states.push(state), dependencies);
+  const controller = new UpdateController(
+    (state) => states.push(state),
+    dependencies,
+  );
   return { update, dependencies, states, controller };
 }
 
@@ -23,7 +30,9 @@ describe("signed update lifecycle", () => {
     const { controller, update, states } = fixture();
     await controller.check();
     expect(states).toEqual([
-      { status: "checking" }, { status: "downloading" }, { status: "ready", version: "0.2.0" },
+      { status: "checking" },
+      { status: "downloading" },
+      { status: "ready", version: "0.2.0" },
     ]);
     expect(update.download).toHaveBeenCalledOnce();
     expect(update.install).not.toHaveBeenCalled();
@@ -43,13 +52,20 @@ describe("signed update lifecycle", () => {
     const { controller, dependencies, update } = fixture();
     await Promise.all([controller.check(), controller.check()]);
     expect(dependencies.check).toHaveBeenCalledOnce();
-    expect(update.download).toHaveBeenCalledWith(undefined, { timeout: 300_000 });
+    expect(update.download).toHaveBeenCalledWith(undefined, {
+      timeout: 300_000,
+    });
   });
 
   it("replaces a pending update only after a newer download verifies", async () => {
     const { controller, dependencies, update, states } = fixture();
     await controller.check();
-    const newer = { ...update, version: "0.3.0", download: vi.fn().mockResolvedValue(undefined), close: vi.fn().mockResolvedValue(undefined) };
+    const newer = {
+      ...update,
+      version: "0.3.0",
+      download: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
     dependencies.check.mockResolvedValue(newer as unknown as Update);
     await controller.check();
     expect(newer.download).toHaveBeenCalledOnce();
@@ -108,7 +124,12 @@ describe("signed update lifecycle", () => {
   it("releases an in-flight check after disposal without emitting new states", async () => {
     const { controller, dependencies, update, states } = fixture();
     let resolve!: (update: Update) => void;
-    dependencies.check.mockImplementationOnce(() => new Promise<Update>((done) => { resolve = done; }));
+    dependencies.check.mockImplementationOnce(
+      () =>
+        new Promise<Update>((done) => {
+          resolve = done;
+        }),
+    );
     const checking = controller.check();
     controller.dispose();
     resolve(update as unknown as Update);

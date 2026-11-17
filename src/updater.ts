@@ -3,7 +3,9 @@ import { Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 
 async function check() {
-  const metadata = await invoke<ConstructorParameters<typeof Update>[0] | null>("check_for_update");
+  const metadata = await invoke<ConstructorParameters<typeof Update>[0] | null>(
+    "check_for_update",
+  );
   return metadata ? new Update(metadata) : null;
 }
 
@@ -48,11 +50,14 @@ export class UpdateController {
       if (previous) await previous.close().catch(() => {});
       this.report({ status: "ready", version: update.version });
     } catch (error) {
-      this.report(previous
-        ? { status: "ready", version: previous.version }
-        : { status: "error", message: String(error) });
+      this.report(
+        previous
+          ? { status: "ready", version: previous.version }
+          : { status: "error", message: String(error) },
+      );
     } finally {
-      if (update && update !== this.pending) await update.close().catch(() => {});
+      if (update && update !== this.pending)
+        await update.close().catch(() => {});
       this.busy = false;
     }
   }
@@ -64,6 +69,7 @@ export class UpdateController {
     this.pending = null;
     this.report({ status: "installing" });
     try {
+      await invoke("factory_api", { action: "prepare_update", args: {} });
       await update.install();
       await this.dependencies.relaunch();
     } catch (error) {
@@ -84,12 +90,19 @@ export class UpdateController {
 
 export function updateLabel(state: UpdateState) {
   switch (state.status) {
-    case "idle": return "Automatic updates enabled";
-    case "checking": return "Checking for updates...";
-    case "current": return "You're up to date";
-    case "downloading": return "Downloading update...";
-    case "ready": return `Version ${state.version} is ready`;
-    case "installing": return "Installing update...";
-    case "error": return "Couldn't check or install updates. You can retry.";
+    case "idle":
+      return "Automatic updates enabled";
+    case "checking":
+      return "Checking for updates...";
+    case "current":
+      return "You're up to date";
+    case "downloading":
+      return "Downloading update...";
+    case "ready":
+      return `Version ${state.version} is ready`;
+    case "installing":
+      return "Installing update...";
+    case "error":
+      return "Couldn't check or install updates. You can retry.";
   }
 }

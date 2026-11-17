@@ -1,8 +1,10 @@
 # Git Factory
 
-A controlled delivery line for software change. Rust-powered desktop application with a small React interface, built with Tauri 2.
+A controlled delivery line for software change. Rust/Tauri core, official OpenCode coding harness, canvas-rendered worklist and transcript. Native DOM controls handle onboarding, text entry, approvals, and accessibility.
 
-**Foundation release:** welcome screen, Windows installer, release automation, and cryptographically verified in-app updates. GitHub sign-in, repository discovery, worktrees, orchestration, and agent execution are not implemented yet.
+**MVP:** GitHub Copilot device onboarding, dynamic model selection, repository/multi-repository discovery, explicit empty-folder Git initialization, isolated task worktrees, coding sessions with tool approvals/questions, canvas journal and diff review, trusted MCP client connections, and separate ACP/MCP stdio CLI interfaces. Signed Windows releases remain enabled.
+
+This is bounded local execution, not the million-agent distributed scheduler. No automatic commits, pushes, PR publication, merge automation, or OS sandbox. A real Copilot subscription and human device authorization are required to run models. See [harness details and the full tool audit](docs/harness.md) and [protocol setup/limits](docs/protocols.md).
 
 ## Download
 
@@ -14,7 +16,7 @@ macOS source builds and CI are supported. Public macOS releases are deferred unt
 
 ## Development
 
-Install Node.js 24 LTS, stable Rust (1.90 or later), and the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your OS. Windows requires the MSVC C++ build tools and WebView2; macOS requires Xcode Command Line Tools.
+Install Git, Node.js 24 LTS, stable Rust (1.90 or later), and the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your OS. Windows requires the MSVC C++ build tools and WebView2; macOS requires Xcode Command Line Tools.
 
 ```sh
 npm ci
@@ -27,8 +29,16 @@ Browser-only UI preview: `npm run dev`. The updater is deliberately inactive in 
 npm run check
 cargo fmt --manifest-path src-tauri/Cargo.toml --check
 cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings
-cargo test --manifest-path src-tauri/Cargo.toml --locked
+cargo test --manifest-path src-tauri/Cargo.toml --locked --all-targets
 ```
+
+## First Run
+
+Start the desktop app, continue through runtime installation, authorize OpenCode's GitHub Copilot device flow, select a model, and choose a trusted repository or parent folder. Empty folders can be initialized explicitly; existing files are never automatically staged. Describe a goal to create worktrees and start a task. Edits/shell tools require approval once; inspect their metadata before approving. Credentials stay in the app-owned OpenCode profile, not an OS keychain.
+
+Task worktrees and history survive restarts. Stop cancels a turn; Close worker releases a local slot without removing files. Four task workers may be open simultaneously. New code executes as your user, so only use trusted repositories, commands and MCP servers. Git content filters are disabled for Factory Git operations; LFS files remain pointers.
+
+Build the console integration executable with `cargo build --manifest-path src-tauri/Cargo.toml --bin factory-cli`. The Windows installer includes it beside the desktop executable. See [ACP/MCP setup](docs/protocols.md).
 
 ## Release A Version
 
