@@ -101,7 +101,13 @@ afterEach(cleanup);
 describe("factory task safety", () => {
   it("removes stale approval controls while another task loads", async () => {
     render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+    });
     const selector = await screen.findByLabelText("Select a task");
+    await act(async () => {
+      await Promise.resolve();
+    });
     fireEvent.change(selector, { target: { value: "a" } });
     await screen.findByText("Allow once");
     const original = request.getMockImplementation()!;
@@ -125,7 +131,13 @@ describe("factory task safety", () => {
         : original(command, parameters),
     );
     render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+    });
     const input = await screen.findByLabelText("New goal");
+    await act(async () => {
+      await Promise.resolve();
+    });
     fireEvent.change(input, { target: { value: "Build a tested feature" } });
     const form = input.closest("form")!;
     fireEvent.submit(form);
@@ -150,7 +162,13 @@ describe("factory task safety", () => {
         : original(command, parameters),
     );
     render(<App />);
+    await act(async () => {
+      await Promise.resolve();
+    });
     const selector = await screen.findByLabelText("Select a task");
+    await act(async () => {
+      await Promise.resolve();
+    });
     fireEvent.change(selector, { target: { value: "a" } });
     fireEvent.click(screen.getByText("Changes"));
     fireEvent.click(screen.getByText("Accessible text / copy"));
