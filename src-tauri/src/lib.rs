@@ -193,14 +193,26 @@ async fn factory_api(
             let _file = factory.github.file_gate(false).await?;
             let issue = issues::load(&factory.root, &task.id)?;
             let project = factory.repositories.project(&issue.project_id).await?;
-            let auth = factory
-                .github
-                .resolve(project.github_account_id.as_deref())?;
+            let account_id = match args.get("accountId") {
+                None => project.github_account_id.as_deref(),
+                Some(Value::Null) => None,
+                Some(Value::String(id)) => Some(id.as_str()),
+                _ => return Err("Invalid GitHub account selection".into()),
+            };
+            let auth = factory.github.resolve(account_id).await?;
+
+            if !issues::publication_retryable(&issue.publication) {
+                return Err("Publication may already have reached GitHub. Inspect the retained branch and PR before retrying.".into());
+            }
             issues::candidate(&task, &auth).await
         }
         "pr_publish" => {
             factory
-                .publish_issue(text("taskId")?, &args["preview"])
+                .publish_issue(
+                    text("taskId")?,
+                    &args["preview"],
+                    args["confirmAccount"].as_bool() == Some(true),
+                )
                 .await
         }
         "github_status" => {
@@ -209,7 +221,8 @@ async fn factory_api(
             let project = factory.repositories.project(text("projectId")?).await?;
             let auth = factory
                 .github
-                .resolve(project.github_account_id.as_deref())?;
+                .resolve(project.github_account_id.as_deref())
+                .await?;
             issues::identity(&project.path, &auth).await
         }
         "pr_list" => {
@@ -218,7 +231,8 @@ async fn factory_api(
             let project = factory.repositories.project(text("projectId")?).await?;
             let auth = factory
                 .github
-                .resolve(project.github_account_id.as_deref())?;
+                .resolve(project.github_account_id.as_deref())
+                .await?;
             issues::pulls(&project.path, &auth).await
         }
         "pr_view" => {
@@ -227,7 +241,8 @@ async fn factory_api(
             let project = factory.repositories.project(text("projectId")?).await?;
             let auth = factory
                 .github
-                .resolve(project.github_account_id.as_deref())?;
+                .resolve(project.github_account_id.as_deref())
+                .await?;
             issues::pull(
                 &project.path,
                 args["number"].as_u64().ok_or("Missing PR number")?,
@@ -241,7 +256,8 @@ async fn factory_api(
             let project = factory.repositories.project(text("projectId")?).await?;
             let auth = factory
                 .github
-                .resolve(project.github_account_id.as_deref())?;
+                .resolve(project.github_account_id.as_deref())
+                .await?;
             issues::approve(
                 &project.path,
                 args["number"].as_u64().ok_or("Missing PR number")?,
@@ -256,7 +272,7 @@ async fn factory_api(
         "github_accounts" => {
             let _guard = factory.github.gate.read().await;
             let _file = factory.github.file_gate(false).await?;
-            Ok(json!(factory.github.list()?))
+            Ok(json!(factory.github.available().await?))
         }
         "github_account_save" => Ok(json!(factory.github.save(text("token")?.trim()).await?)),
         "github_account_remove" => {
@@ -283,7 +299,13 @@ async fn factory_api(
             let account = match args.get("accountId") {
                 Some(Value::Null) => None,
                 Some(Value::String(id)) => {
-                    if !factory.github.list()?.iter().any(|a| &a.id == id) {
+                    if !factory
+                        .github
+                        .available()
+                        .await?
+                        .iter()
+                        .any(|a| &a.id == id)
+                    {
                         return Err("GitHub account is not connected".into());
                     }
                     Some(id.clone())

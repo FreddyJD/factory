@@ -210,8 +210,12 @@ export async function previewApi(
       return [];
     case "github_accounts":
       return [
-        { id: "1", login: "personal-account" },
-        { id: "2", login: "work-account" },
+        {
+          id: "gcm:personal-account",
+          login: "personal-account",
+          source: "gcm",
+        },
+        { id: "gh:work-account", login: "work-account", source: "gh" },
       ];
     case "github_status":
       return {

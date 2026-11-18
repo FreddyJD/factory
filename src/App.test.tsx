@@ -873,6 +873,7 @@ describe("repository-first application", () => {
       repository: "acme/factory",
       base: "main",
       account: "reviewer",
+      accountId: null,
       diff: "+change",
       added: [],
     };
@@ -906,13 +907,19 @@ describe("repository-first application", () => {
     const publish = await screen.findByRole("button", {
       name: "Commit, push and create draft PR",
     });
+    expect((publish as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: /I confirm publication as reviewer/,
+      }),
+    );
     expect((publish as HTMLButtonElement).disabled).toBe(false);
     expect(screen.queryByText(/Validation command/)).toBeNull();
     fireEvent.click(publish);
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("factory_api", {
         action: "pr_publish",
-        args: { taskId: task.id, preview },
+        args: { taskId: task.id, preview, confirmAccount: true },
       }),
     );
   });

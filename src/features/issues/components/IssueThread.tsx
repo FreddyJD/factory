@@ -1,7 +1,12 @@
 import { useRef, useState } from "react";
 import { api, transcript, type Task } from "../../../shared/api";
-import type { Issue } from "../../../shared/types";
-import { statusLabel } from "../../../shared/types";
+import type { Issue, Project, GitHubAccount } from "../../../shared/types";
+import {
+  statusLabel,
+  githubAccountSource,
+  publicationRetryable,
+} from "../../../shared/types";
+import { useResource } from "../../../shared/hooks/useResource";
 import { Markdown } from "../../../shared/components/Markdown";
 import { useIssue } from "../hooks/useIssue";
 import { IssueTranscript } from "./IssueTranscript";
@@ -21,6 +26,8 @@ export function IssueThread({
   onLocalReview,
   onRemove,
   github,
+  project,
+  onSettings,
 }: {
   task: Task;
   issue?: Issue;
@@ -30,6 +37,8 @@ export function IssueThread({
   onLocalReview: () => void;
   onRemove: (task: Task) => void;
   github: boolean | undefined;
+  project?: Project;
+  onSettings?: () => void;
 }) {
   const session = useIssue(task.id);
   const [comment, setComment] = useState("");
@@ -37,6 +46,12 @@ export function IssueThread({
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<Record<string, unknown> | null>(null);
+  const [accountId, setAccountId] = useState(project?.githubAccountId ?? "");
+  const [confirmed, setConfirmed] = useState(false);
+  const accounts = useResource<GitHubAccount[]>(
+    github ? "issue-github-accounts" : null,
+    () => api("github_accounts"),
+  );
   const [diff, setDiff] = useState<string | null>(null);
   const [confirmRemoval, setConfirmRemoval] = useState(false);
   const locked = useRef(false);
@@ -56,11 +71,11 @@ export function IssueThread({
     setError("");
     try {
       await operation();
-      session.refresh();
-      onChange();
     } catch (error) {
       setError(String(error));
     } finally {
+      session.refresh();
+      onChange();
       setBusy("");
       locked.current = false;
     }
@@ -209,13 +224,32 @@ export function IssueThread({
                   {JSON.stringify(preview.added, null, 2)}
                 </pre>
                 <div className="button-row">
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={confirmed}
+                      disabled={!!busy}
+                      onChange={(event) => setConfirmed(event.target.checked)}
+                    />
+                    I confirm publication as {String(preview.account)} to{" "}
+                    {String(preview.repository)}
+                  </label>
                   <button
                     className="btn btn-success"
-                    disabled={!!busy}
+                    disabled={!!busy || !confirmed || working}
                     onClick={() =>
                       void action("Publishing draft PR", async () => {
-                        await api("pr_publish", { taskId: task.id, preview });
-                        setPreview(null);
+                        if (!confirmed) return;
+                        try {
+                          await api("pr_publish", {
+                            taskId: task.id,
+                            preview,
+                            confirmAccount: true,
+                          });
+                        } finally {
+                          setPreview(null);
+                          setConfirmed(false);
+                        }
                       })
                     }
                   >
@@ -414,6 +448,53 @@ export function IssueThread({
             <>
               <hr />
               <h4>Pull request</h4>
+              {!issue?.publication?.url && (
+                <>
+                  <label>
+                    GitHub identity for this PR
+                    <select
+                      className="form-control"
+                      value={accountId}
+                      disabled={!!busy || working || accounts.loading}
+                      onChange={(event) => {
+                        setAccountId(event.target.value);
+                        setPreview(null);
+                        setConfirmed(false);
+                      }}
+                    >
+                      <option value="">Use GitHub CLI default</option>
+                      {accountId &&
+                        !accounts.value?.some((a) => a.id === accountId) && (
+                          <option value={accountId}>
+                            Saved account unavailable
+                          </option>
+                        )}
+                      {accounts.value?.map((account) => (
+                        <option key={account.id} value={account.id}>
+                          {account.login} ({githubAccountSource(account)})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    className="link-button"
+                    disabled={!!busy}
+                    onClick={accounts.refresh}
+                  >
+                    Refresh identities
+                  </button>
+                  {onSettings && (
+                    <button className="link-button" onClick={onSettings}>
+                      Manage GitHub accounts
+                    </button>
+                  )}
+                  {accounts.error && (
+                    <p className="text-danger" role="alert">
+                      {accounts.error}
+                    </p>
+                  )}
+                </>
+              )}
               {issue?.publication?.url ? (
                 <a
                   href={issue.publication.url}
@@ -430,12 +511,19 @@ export function IssueThread({
                     working ||
                     removed ||
                     issue?.outcome !== "completed" ||
-                    !!issue?.publication
+                    !publicationRetryable(issue?.publication ?? null)
                   }
                   onClick={() =>
-                    void action("Preparing PR", async () =>
-                      setPreview(await api("pr_preview", { taskId: task.id })),
-                    )
+                    void action("Preparing PR", async () => {
+                      setConfirmed(false);
+                      setPreview(null);
+                      setPreview(
+                        await api("pr_preview", {
+                          taskId: task.id,
+                          accountId: accountId || null,
+                        }),
+                      );
+                    })
                   }
                 >
                   Create draft PR
@@ -444,6 +532,13 @@ export function IssueThread({
               {issue?.publication?.state && (
                 <p className="muted">{issue.publication.state}</p>
               )}
+              {!publicationRetryable(issue?.publication ?? null) &&
+                !issue?.publication?.url && (
+                  <p className="muted">
+                    Publication may already have reached GitHub. Inspect the
+                    retained branch and PR before retrying.
+                  </p>
+                )}
               {issue?.publication?.error && (
                 <p className="text-danger">{issue.publication.error}</p>
               )}
