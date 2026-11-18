@@ -263,6 +263,24 @@ it("preserves a newer unsaved edit when delayed saved-project props arrive", asy
   ).toBe(false);
 });
 
+it("exposes existing Git and CLI identities without offering to remove their credentials", async () => {
+  vi.mocked(api).mockResolvedValue([
+    { id: "gcm:freddyjd", login: "FreddyJD", source: "gcm" },
+    { id: "gh:managed_user", login: "managed_user", source: "gh" },
+  ]);
+  render(<GitHubRepositorySettings project={project} onRefresh={refresh} />);
+  await screen.findByText("FreddyJD");
+  expect(
+    screen.getByRole("option", { name: "FreddyJD (Git Credential Manager)" }),
+  ).toBeTruthy();
+  expect(
+    screen.getByRole("option", { name: "managed_user (GitHub CLI)" }),
+  ).toBeTruthy();
+  expect(
+    screen.queryByRole("button", { name: /Remove GitHub account/ }),
+  ).toBeNull();
+});
+
 it("recovers discovery errors on refresh and requires confirmation before account removal", async () => {
   let failed = true;
   vi.mocked(api).mockImplementation(async (action) => {

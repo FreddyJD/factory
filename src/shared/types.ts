@@ -5,6 +5,28 @@ export interface Project {
   path: string;
   githubAccountId?: string | null;
 }
+export interface GitHubAccount {
+  id: string;
+  login: string;
+  source?: "token" | "gh" | "gcm";
+}
+export function githubAccountSource(account: GitHubAccount) {
+  return account.source === "gh"
+    ? "GitHub CLI"
+    : account.source === "gcm"
+      ? "Git Credential Manager"
+      : "Factory token";
+}
+export function publicationRetryable(
+  publication: Issue["publication"],
+): boolean {
+  return (
+    !publication ||
+    (publication.state === "failed-or-unknown" &&
+      Object.hasOwn(publication, "last") &&
+      (publication.last === null || publication.last?.state === "committing"))
+  );
+}
 export interface Checkout {
   id: string;
   path: string;
@@ -51,6 +73,7 @@ export interface Issue {
     url?: string;
     error?: string;
     number?: number;
+    last?: { state?: string } | null;
   } | null;
 }
 export interface Status extends RuntimeStatus {

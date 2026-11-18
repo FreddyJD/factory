@@ -1,9 +1,13 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { api } from "../../../shared/api";
-import type { Project } from "../../../shared/types";
+import {
+  githubAccountSource,
+  type GitHubAccount,
+  type Project,
+} from "../../../shared/types";
 import { useResource } from "../../../shared/hooks/useResource";
 
-type Account = { id: string; login: string };
+type Account = GitHubAccount;
 
 export function GitHubRepositorySettings({
   project,
@@ -60,7 +64,8 @@ export function GitHubRepositorySettings({
       <div className="panel-body">
         <p>
           Connect multiple github.com accounts for pull requests and automatic
-          pushes. These accounts are separate from GitHub Copilot.
+          pushes. Saved GitHub CLI and Git Credential Manager identities appear
+          automatically. These accounts are separate from GitHub Copilot.
         </p>
         {accounts.loading && !accounts.value && (
           <p role="status">Loading repository accounts...</p>
@@ -69,28 +74,30 @@ export function GitHubRepositorySettings({
           <div className="provider-row" key={account.id}>
             <div>
               <strong>{account.login}</strong>{" "}
-              <span className="muted">github.com</span>
+              <span className="muted">{githubAccountSource(account)}</span>
             </div>
-            <button
-              className="btn btn-default"
-              disabled={busy}
-              onClick={() => {
-                if (
-                  !window.confirm(
-                    `Remove ${account.login} from Factory? The token will not be revoked on GitHub.`,
+            {(!account.source || account.source === "token") && (
+              <button
+                className="btn btn-default"
+                disabled={busy}
+                onClick={() => {
+                  if (
+                    !window.confirm(
+                      `Remove ${account.login} from Factory? The token will not be revoked on GitHub.`,
+                    )
                   )
-                )
-                  return;
-                void action(async () => {
-                  await api("github_account_remove", { id: account.id });
-                  accounts.refresh();
-                  setNotice("GitHub account removed.");
-                });
-              }}
-              aria-label={`Remove GitHub account ${account.login}`}
-            >
-              Remove
-            </button>
+                    return;
+                  void action(async () => {
+                    await api("github_account_remove", { id: account.id });
+                    accounts.refresh();
+                    setNotice("GitHub account removed.");
+                  });
+                }}
+                aria-label={`Remove GitHub account ${account.login}`}
+              >
+                Remove
+              </button>
+            )}
           </div>
         ))}
         {accounts.value?.length === 0 && (
@@ -196,9 +203,10 @@ export function GitHubRepositorySettings({
         <p className="muted">
           A selected account is used for PRs and automatic HTTPS pushes, even
           with an SSH origin. Your origin, Git author, CLI default, and Copilot
-          login are unchanged. GitHub CLI must be installed. Existing issues
-          retain their authorized account; changing it requires a new issue for
-          automatic publication.
+          login are unchanged. GitHub CLI must be installed. For an existing
+          failed issue, choose an identity in its Pull request section, review
+          the draft, and confirm the account to retry. Unknown remote outcomes
+          cannot be retried automatically.
         </p>
         <label className="checkbox-label">
           <input
@@ -301,7 +309,7 @@ function RepositoryAccount({
           )}
           {accounts.map((account) => (
             <option key={account.id} value={account.id}>
-              {account.login} (github.com)
+              {account.login} ({githubAccountSource(account)})
             </option>
           ))}
         </select>

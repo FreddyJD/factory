@@ -283,6 +283,8 @@ export function RepositoryPage({
             <IssueThread
               key={selectedTask.id}
               task={selectedTask}
+              project={project}
+              onSettings={onSettings}
               github={local.value?.github}
               issue={issues.find((i) => i.taskId === selectedTask.id)}
               onBack={() => setSelected(null)}
