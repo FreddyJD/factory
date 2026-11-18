@@ -445,7 +445,7 @@ impl Factory {
         let issue = Issue {
             task_id: task.id.clone(),
             project_id: project_id.into(),
-            title: title.into(),
+            title,
             body: body.into(),
             created_at: issues::now(),
             native_edits: args["nativeEdits"] == true,
@@ -1517,7 +1517,7 @@ mod tests {
         ];
         assert_eq!(context(&history, "policy", 32_000, &[]).unwrap().len(), 4);
         let large = json!({"role":"user","content":vec![image.clone(); 4]});
-        assert!(context(&[large.clone()], "policy", 32_000, &[]).is_err());
+        assert!(context(std::slice::from_ref(&large), "policy", 32_000, &[]).is_err());
         assert!(context(&[large], "policy", 100_000, &[]).is_ok());
         let history = vec![
             json!({"role":"user","content":vec![image; 4]}),
