@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useState } from "react";
 import type { TranscriptLine } from "../../../shared/api";
 import { ImageGallery } from "./ImageAttachments";
 import { Markdown } from "../../../shared/components/Markdown";
@@ -59,13 +59,26 @@ function ToolCall({
 }
 
 export function IssueTranscript({ lines }: { lines: TranscriptLine[] }) {
-  const container = useRef<HTMLDivElement>(null);
-  const follow = useRef(true);
   const [selectable, setSelectable] = useState(false);
-  useLayoutEffect(() => {
-    if (follow.current && container.current)
-      container.current.scrollTop = container.current.scrollHeight;
-  }, [lines]);
+  const comments: {
+    id: string;
+    author: "user" | "assistant";
+    lines: TranscriptLine[];
+  }[] = [];
+  for (const line of lines) {
+    const author = line.kind === "user" ? "user" : "assistant";
+    const previous = comments.at(-1);
+    if (
+      previous?.author === author &&
+      (author === "assistant" ||
+        (line.messageId !== undefined &&
+          previous.lines[0].messageId === line.messageId))
+    ) {
+      previous.lines.push(line);
+    } else {
+      comments.push({ id: line.id, author, lines: [line] });
+    }
+  }
   return (
     <>
       <div className="transcript-header">
@@ -78,50 +91,47 @@ export function IssueTranscript({ lines }: { lines: TranscriptLine[] }) {
         </button>
       </div>
       <div
-        ref={container}
         className="issue-transcript"
-        tabIndex={0}
         role="region"
         aria-label="Issue conversation"
-        onClickCapture={(event) => {
-          if ((event.target as HTMLElement).closest("summary"))
-            follow.current = false;
-        }}
-        onScroll={(event) => {
-          const element = event.currentTarget;
-          follow.current =
-            element.scrollTop + element.clientHeight >=
-            element.scrollHeight - 40;
-        }}
       >
         {lines.length === 0 && (
           <p className="muted">
             The conversation will appear here when the agent starts.
           </p>
         )}
-        {lines.map((line) =>
-          line.kind === "tool" ? (
-            <ToolCall key={line.id} tool={line.tool} />
-          ) : (
-            <article
-              key={line.id}
-              className={"transcript-message " + line.kind}
-            >
-              <h4>
-                {line.kind === "user"
-                  ? "You commented"
-                  : line.kind === "error"
-                    ? "Error"
-                    : "Factory"}
-              </h4>
-              {line.image ? (
-                <ImageGallery images={[line.image]} />
-              ) : (
-                <Markdown text={line.text} />
+        {comments.map((comment) => (
+          <article
+            key={comment.id}
+            className={"panel comment-card " + comment.author}
+            aria-label={
+              comment.author === "user" ? "Your comment" : "Factory comment"
+            }
+          >
+            <div className="panel-heading">
+              <span className="avatar avatar-small" aria-hidden="true">
+                {comment.author === "user" ? "Y" : "F"}
+              </span>
+              <strong>{comment.author === "user" ? "You" : "Factory"}</strong>
+            </div>
+            <div className="panel-body markdown-body">
+              {comment.lines.map((line) =>
+                line.kind === "tool" ? (
+                  <ToolCall key={line.id} tool={line.tool} />
+                ) : (
+                  <div key={line.id} className={"transcript-message " + line.kind}>
+                    {line.kind === "error" && <strong>Error</strong>}
+                    {line.image ? (
+                      <ImageGallery images={[line.image]} />
+                    ) : (
+                      <Markdown text={line.text} />
+                    )}
+                  </div>
+                ),
               )}
-            </article>
-          ),
-        )}
+            </div>
+          </article>
+        ))}
       </div>
       {selectable && (
         <textarea

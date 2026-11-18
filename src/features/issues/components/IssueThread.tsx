@@ -45,7 +45,12 @@ export function IssueThread({
   const removed = ["removed", "removing", "removal-failed"].includes(
     current.status,
   );
-  const lines = transcript(snapshot ?? null);
+  const openingMessageId = snapshot?.messages.find(
+    (message) => message.info.role === "user",
+  )?.info.id;
+  const lines = transcript(snapshot ?? null).filter(
+    (line) => line.kind !== "user" || line.messageId !== openingMessageId,
+  );
   const working =
     snapshot?.status.type === "busy" ||
     ["working", "needs-you", "publishing"].includes(current.status);
@@ -130,9 +135,7 @@ export function IssueThread({
           {snapshot?.error && (
             <div className="alert alert-danger">{snapshot.error}</div>
           )}
-          <div className="panel conversation-panel">
-            <IssueTranscript lines={lines} />
-          </div>
+          <IssueTranscript lines={lines} />
           {!!snapshot?.queued?.length && (
             <section className="panel" aria-label="Queued comments">
               <div className="panel-heading">

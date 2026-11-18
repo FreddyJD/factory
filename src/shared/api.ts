@@ -124,6 +124,7 @@ export function models(catalog: ProviderCatalog) {
 
 export type TranscriptLine = {
   id: string;
+  messageId?: string;
   text: string;
   image?: { name: string; dataUrl: string };
 } & (
@@ -147,6 +148,7 @@ export function transcript(snapshot: Snapshot | null): TranscriptLine[] {
     if (message.info.error)
       lines.push({
         id: `${message.info.id}:error`,
+        messageId: message.info.id,
         kind: "error",
         text: JSON.stringify(message.info.error),
       });
@@ -155,13 +157,15 @@ export function transcript(snapshot: Snapshot | null): TranscriptLine[] {
       if (part.type === "image" && part.dataUrl)
         lines.push({
           id,
-          kind: "user",
+          messageId: message.info.id,
+          kind: message.info.role === "user" ? "user" : "assistant",
           text: `[Image: ${part.name ?? "Attached image"}]`,
           image: { name: part.name ?? "Attached image", dataUrl: part.dataUrl },
         });
       if (part.type === "text" && part.text)
         lines.push({
           id,
+          messageId: message.info.id,
           kind: message.info.role === "user" ? "user" : "assistant",
           text: part.text,
         });
@@ -178,6 +182,7 @@ export function transcript(snapshot: Snapshot | null): TranscriptLine[] {
         if (state?.error != null) sections.push("Error\n" + state.error);
         lines.push({
           id,
+          messageId: message.info.id,
           kind: "tool",
           text: sections.join("\n\n"),
           tool: {

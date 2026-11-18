@@ -45,12 +45,51 @@ describe("tool conversation", () => {
     const conversation = screen.getByRole("region", {
       name: "Issue conversation",
     });
-    const entries = Array.from(conversation.children);
+    const comments = Array.from(conversation.children);
+    expect(comments).toHaveLength(1);
+    expect(comments[0].getAttribute("aria-label")).toBe("Factory comment");
+    const entries = Array.from(
+      comments[0].querySelector(".panel-body")!.children,
+    );
     expect(entries).toHaveLength(4);
     expect(entries[0].textContent).toContain("Before image");
     expect(entries[1].querySelector("img")?.getAttribute("src")).toBe(dataUrl);
     expect(entries[2].tagName).toBe("DETAILS");
     expect(entries[3].textContent).toContain("After image");
+  });
+  it("groups each user's text and attachments and keeps agent activity in its reply", () => {
+    const user = (id: string, text: string) => ({
+      info: { id, role: "user" },
+      parts: [
+        { id: "text", type: "text", text },
+        {
+          id: "image",
+          type: "image",
+          name: "screen.png",
+          dataUrl: "data:image/png;base64,cG5n",
+        },
+      ],
+    });
+    const lines = transcript({
+      messages: [
+        user("user-1", "First comment"),
+        user("user-2", "Second comment"),
+        { info: { id: "agent-1", role: "assistant" }, parts: [call] },
+        {
+          info: { id: "agent-2", role: "assistant" },
+          parts: [{ id: "reply", type: "text", text: "Done" }],
+        },
+        user("user-3", "Follow-up"),
+      ],
+    } as Snapshot);
+    render(<IssueTranscript lines={lines} />);
+    expect(screen.getAllByRole("article", { name: "Your comment" })).toHaveLength(
+      3,
+    );
+    const agent = screen.getByRole("article", { name: "Factory comment" });
+    expect(agent.textContent).toContain("read");
+    expect(agent.textContent).toContain("Done");
+    expect(screen.queryByText("You commented")).toBeNull();
   });
   it("retains structured input and empty output in text export", () => {
     const lines = transcript(
