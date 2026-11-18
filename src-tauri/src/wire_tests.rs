@@ -127,6 +127,85 @@ fn user_images_translate_to_every_protocol_and_survive_tool_continuations() {
 }
 
 #[test]
+fn long_running_context_preserves_images_and_native_tool_continuations() {
+    for protocol in [
+        Protocol::Chat,
+        Protocol::Responses,
+        Protocol::Messages,
+        Protocol::MessagesV1,
+    ] {
+        let mut history = vec![
+            json!({"role":"user","content":[{"type":"text","text":"Inspect"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}]}),
+        ];
+        for index in 0..10 {
+            let id = format!("call_{index}");
+            let mut message = assistant(&Completion {
+                calls: vec![ToolCall {
+                    id: id.clone(),
+                    name: "read".into(),
+                    arguments: "{}".into(),
+                }],
+                ..Default::default()
+            });
+            if protocol != Protocol::Chat {
+                let items = if protocol == Protocol::Responses {
+                    vec![
+                        json!({"type":"reasoning","encrypted_content":format!("cipher-{index}")}),
+                        json!({"type":"function_call","call_id":id,"name":"read","arguments":"{}","status":"completed"}),
+                    ]
+                } else {
+                    vec![
+                        json!({"type":"thinking","thinking":"private","signature":format!("signature-{index}")}),
+                        json!({"type":"tool_use","id":id,"name":"read","input":{}}),
+                    ]
+                };
+                message["provider_state"] = json!({"version":1,"provider":"github-copilot","protocol":protocol.label(),"model":"fixture","items":items});
+            }
+            history.push(message);
+            history.push(
+                json!({"role":"tool","tool_call_id":id,"content":"file line\n".repeat(5000)}),
+            );
+        }
+        let original = history.clone();
+        let projected = crate::runtime::context(&history, "Policy", 128_000, &tools()).unwrap();
+        assert_eq!(history, original);
+        assert_eq!(projected.last(), history.last());
+        let assistants: Vec<_> = projected
+            .iter()
+            .filter(|m| m["role"] == "assistant")
+            .collect();
+        assert_eq!(
+            assistants,
+            history
+                .iter()
+                .filter(|m| m["role"] == "assistant")
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(projected.iter().filter(|m| m["role"] == "tool").count(), 10);
+        assert!(projected.iter().any(|m| m["content"]
+            .as_str()
+            .is_some_and(|s| s.contains("Factory context limit"))));
+        let request = body(protocol, "fixture", &projected, &tools(), 8192).unwrap();
+        let serialized = request.to_string();
+        assert!(serialized.contains("AAAA"));
+        if protocol == Protocol::Responses {
+            assert_eq!(serialized.matches("cipher-").count(), 10);
+            assert_eq!(
+                request["input"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|i| i["type"] == "function_call_output")
+                    .count(),
+                10
+            );
+        } else if protocol != Protocol::Chat {
+            assert_eq!(serialized.matches("signature-").count(), 10);
+        }
+    }
+}
+
+#[test]
 fn responses_tool_roundtrip_retains_final_encrypted_state_exactly_once() {
     for fragmented in [false, true] {
         let completion = stream(Protocol::Responses, response_events(), fragmented).unwrap();
