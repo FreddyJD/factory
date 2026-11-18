@@ -10,6 +10,7 @@ import {
 } from "@testing-library/react";
 import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 import { App } from "./App";
+import tauriConfig from "../src-tauri/tauri.conf.json";
 const { invoke, listeners } = vi.hoisted(() => ({
   invoke: vi.fn(),
   listeners: new Set<(event: unknown) => void>(),
@@ -200,6 +201,18 @@ beforeEach(() => {
   invoke.mockImplementation(handler);
 });
 afterEach(cleanup);
+describe("native window frame", () => {
+  it("uses OS decorations without duplicate web window controls", async () => {
+    expect(
+      tauriConfig.app.windows.find((window) => window.label === "main")
+        ?.decorations,
+    ).toBe(true);
+    const { container } = render(<App />);
+    await screen.findByRole("button", { name: "README.md" });
+    expect(screen.queryByLabelText("Window controls")).toBeNull();
+    expect(container.querySelector("[data-tauri-drag-region]")).toBeNull();
+  });
+});
 describe("factory view", () => {
   it("gates the factory beside the checkout dropdown and preserves the file path", async () => {
     render(<App />);

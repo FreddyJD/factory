@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { version } from "../package.json";
 import { api, desktop, preview } from "./shared/api";
 import { belongs, type Tab } from "./shared/types";
-import { WindowControls } from "./shared/components/WindowControls";
 import { Icon } from "./shared/components/Icon";
 import { useProjects } from "./features/projects/hooks/useProjects";
 import { ProjectSidebar } from "./features/projects/components/ProjectSidebar";
@@ -63,7 +62,7 @@ export function App() {
     : [];
   return (
     <div className="application">
-      <header className="global-header" data-tauri-drag-region>
+      <header className="global-header">
         <span className="global-breadcrumb">
           <Icon name={section === "settings" ? "settings" : "repo"} />
           {section === "repository"
@@ -86,7 +85,6 @@ export function App() {
             {opening ? "Opening…" : "Open project"}
           </button>
         </div>
-        <WindowControls />
       </header>
       <ProjectSidebar
         projects={projects.projects}
