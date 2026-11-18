@@ -206,6 +206,35 @@ pub async fn common(path: &Path) -> Result<PathBuf> {
     .map_err(|e| e.to_string())
 }
 
+struct CheckoutMetadata {
+    root: PathBuf,
+    common_dir: PathBuf,
+    git_dir: PathBuf,
+}
+
+async fn checkout_metadata(path: &Path) -> Result<CheckoutMetadata> {
+    let raw = git(
+        path,
+        &[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+            "--show-toplevel",
+            "--absolute-git-dir",
+        ],
+    )
+    .await?;
+    let paths = raw.lines().collect::<Vec<_>>();
+    if paths.len() != 3 || paths.iter().any(|p| p.is_empty()) {
+        return Err("Git returned ambiguous checkout paths".into());
+    }
+    Ok(CheckoutMetadata {
+        common_dir: dunce::canonicalize(paths[0]).map_err(|e| e.to_string())?,
+        root: dunce::canonicalize(paths[1]).map_err(|e| e.to_string())?,
+        git_dir: dunce::canonicalize(paths[2]).map_err(|e| e.to_string())?,
+    })
+}
+
 impl Repositories {
     pub fn new(root: &Path) -> Self {
         let (projects, storage_error) = match fs::read(root.join("projects.json")) {
@@ -296,9 +325,14 @@ impl Repositories {
     }
     pub async fn inventory(&self, id: &str) -> Result<Value> {
         let project = self.project(id).await?;
-        let identity = common(&project.path).await?;
-        let raw = git(&project.path, &["worktree", "list", "--porcelain", "-z"]).await?;
-        let tasks = workspace::tasks(&self.root)?;
+        let (identity, raw) = tokio::try_join!(
+            common(&project.path),
+            git(&project.path, &["worktree", "list", "--porcelain", "-z"])
+        )?;
+        let data = self.root.clone();
+        let tasks = tokio::task::spawn_blocking(move || workspace::tasks(&data))
+            .await
+            .map_err(|e| e.to_string())??;
         let mut targets = Vec::new();
         for record in raw.split("\0\0") {
             let mut path = None;
@@ -322,7 +356,9 @@ impl Repositories {
             let Some(path) = path else {
                 continue;
             };
-            if unavailable || git(&path, &["rev-parse", "--show-toplevel"]).await.is_err() {
+            // Discovery is not authorization; validate only the selected checkout
+            // in validated_target instead of spawning Git once per worktree.
+            if unavailable || !path.is_dir() {
                 continue;
             }
             let mut registry = self.targets.lock().await;
@@ -401,6 +437,9 @@ impl Repositories {
         Ok(json!({"project":project,"targets":targets,"branches":branches,"remote":remote}))
     }
     pub async fn target(&self, project: &str, id: &str) -> Result<PathBuf> {
+        Ok(self.validated_target(project, id).await?.root)
+    }
+    async fn validated_target(&self, project: &str, id: &str) -> Result<CheckoutMetadata> {
         let (owner, path, identity) = self
             .targets
             .lock()
@@ -412,41 +451,38 @@ impl Repositories {
             return Err("Checkout belongs to another project".into());
         }
         let source = self.project(project).await?;
-        if common(&source.path).await? != identity || common(&path).await? != identity {
+        let metadata = checkout_metadata(&path).await?;
+        let source_identity = if source.path == path {
+            metadata.common_dir.clone()
+        } else {
+            common(&source.path).await?
+        };
+        if source_identity != identity || metadata.common_dir != identity {
             return Err("Repository identity changed; refresh worktrees".into());
         }
-        let records = git(&source.path, &["worktree", "list", "--porcelain", "-z"]).await?;
-        if path != source.path
-            && !records
+        if path != source.path {
+            let records = git(&source.path, &["worktree", "list", "--porcelain", "-z"]).await?;
+            if !records
                 .split('\0')
                 .filter_map(|line| line.strip_prefix("worktree "))
                 .filter_map(|p| dunce::canonicalize(p).ok())
                 .any(|p| p == path)
-        {
-            return Err("Checkout is no longer registered; refresh worktrees".into());
+            {
+                return Err("Checkout is no longer registered; refresh worktrees".into());
+            }
         }
-        if dunce::canonicalize(
-            git(&path, &["rev-parse", "--show-toplevel"])
-                .await?
-                .trim_end_matches(['\r', '\n']),
-        )
-        .map_err(|e| e.to_string())?
-            != path
-        {
+        if metadata.root != path {
             return Err("Checkout root changed".into());
         }
-        Ok(path)
+        Ok(metadata)
     }
     pub async fn browse(&self, project: &str, target: &str, relative: &str) -> Result<Value> {
-        let root = self.target(project, target).await?;
+        let CheckoutMetadata {
+            root,
+            common_dir: admin,
+            git_dir,
+        } = self.validated_target(project, target).await?;
         let relative = relative.to_string();
-        let admin = common(&root).await?;
-        let git_dir = dunce::canonicalize(
-            git(&root, &["rev-parse", "--absolute-git-dir"])
-                .await?
-                .trim(),
-        )
-        .map_err(|e| e.to_string())?;
         tokio::task::spawn_blocking(move || {
             let path = root.join(&relative);
             if path.starts_with(&admin) || path.starts_with(&git_dir) {
@@ -638,6 +674,45 @@ fn browse(root: &Path, relative: &str) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn stale_repository_identity_and_cross_project_tokens_are_rejected() {
+        let root = std::env::temp_dir().join(format!("browser-identity-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("source")).unwrap();
+        fs::create_dir(root.join("other")).unwrap();
+        let root = dunce::canonicalize(root).unwrap();
+        workspace::initialize_empty(&root.join("source")).unwrap();
+        workspace::initialize_empty(&root.join("other")).unwrap();
+        let browser = Repositories::new(&root.join("data"));
+        let project = browser
+            .register(&root.join("source"))
+            .await
+            .unwrap()
+            .remove(0);
+        let other = browser
+            .register(&root.join("other"))
+            .await
+            .unwrap()
+            .remove(1);
+        let inv = browser.inventory(&project.id).await.unwrap();
+        let id = inv["targets"][0]["id"].as_str().unwrap();
+        assert!(browser.browse(&other.id, id, "").await.is_err());
+        fs::rename(project.path.join(".git"), project.path.join("old-admin")).unwrap();
+        workspace::git(
+            &project.path,
+            &[
+                "init",
+                "--separate-git-dir",
+                root.join("replacement").to_str().unwrap(),
+            ],
+        )
+        .unwrap();
+        assert!(browser
+            .browse(&project.id, id, "")
+            .await
+            .unwrap_err()
+            .contains("identity changed"));
+        fs::remove_dir_all(root).unwrap();
+    }
     #[tokio::test]
     async fn linked_projects_keep_independent_checkout_tokens() {
         let root = std::env::temp_dir().join(format!("browser-tokens-{}", uuid::Uuid::new_v4()));

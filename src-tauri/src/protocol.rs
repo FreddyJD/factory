@@ -62,9 +62,8 @@ pub async fn cli() -> Result<()> {
         Some("review") => runtime::review(&factory.root, args.get(1).ok_or("Usage: factory-cli review TASK_ID")?).await,
         Some("prepare") => {
             let path = PathBuf::from(args.get(1).ok_or("Usage: factory-cli prepare /repository")?);
-            let workspace = workspace::discover(&path)?;
             let model=args.windows(2).find(|a|a[0]=="--model").map(|a|a[1].as_str()).filter(|m|!m.is_empty()).ok_or("Usage: factory-cli prepare /repository --model MODEL_ID (select an available Copilot chat model)")?;
-            let task = workspace::create_task(&factory.root, &workspace, "Editor coding session", model)?;
+            let task = factory.prepare(&path, "Editor coding session", model).await?;
             println!("{}", serde_json::to_string_pretty(&task).map_err(|e|e.to_string())?); Ok(())
         }
         Some("--acp") => {
@@ -224,7 +223,12 @@ async fn call(
     let text = |key: &str| args[key].as_str().ok_or_else(|| format!("Missing {key}"));
     let id = if name != "factory_workspace" && name != "factory_tasks" && name != "factory_start" {
         let id = text("taskId")?;
-        if workspace::load_task(&factory.root, id)?.workspace != scope {
+        let task = if name == "factory_snapshot" {
+            workspace::task_record(&factory.root, id)?
+        } else {
+            workspace::load_task(&factory.root, id)?
+        };
+        if task.workspace != scope {
             return Err("Task is outside this server's workspace scope".into());
         }
         id
@@ -388,6 +392,43 @@ async fn mcp(factory: Arc<Factory>, scope: PathBuf, execution: bool) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn removed_snapshots_remain_workspace_scoped() {
+        let root = std::env::temp_dir().join(format!("protocol-removed-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("source")).unwrap();
+        std::fs::create_dir(root.join("data")).unwrap();
+        let root = dunce::canonicalize(root).unwrap();
+        workspace::initialize_empty(&root.join("source")).unwrap();
+        let factory = Factory::new(root.join("data"));
+        let task = factory
+            .prepare(&root.join("source"), "removed", "fixture")
+            .await
+            .unwrap();
+        factory.remove_worktrees(&task.id).await.unwrap();
+        let args = json!({"taskId":task.id});
+        assert_eq!(
+            call(
+                &factory,
+                &root.join("source"),
+                "factory_snapshot",
+                &args,
+                true
+            )
+            .await
+            .unwrap()["task"]["status"],
+            "removed"
+        );
+        assert!(call(
+            &factory,
+            &root.join("other"),
+            "factory_snapshot",
+            &args,
+            true
+        )
+        .await
+        .is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[tokio::test]
     async fn framing_handles_unicode_and_escaped_newlines() {
         let data = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"line\\nnext\"}\r\n";

@@ -189,6 +189,83 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 describe("repository-first application", () => {
+  it("confirms worktree removal once and retains the issue history", async () => {
+    let removed = false;
+    let finish!: () => void;
+    invoke.mockImplementation((command, params) => {
+      if (params.action === "snapshot")
+        return {
+          task: { ...task, status: removed ? "removed" : "review" },
+          messages: [],
+          permissions: [],
+          questions: [],
+          status: { type: "idle" },
+        };
+      if (params.action === "close") return true;
+      if (params.action === "worktrees_remove")
+        return new Promise((resolve) => {
+          finish = () => {
+            removed = true;
+            resolve({ ...task, status: "removed" });
+          };
+        });
+      return handler(command, params);
+    });
+    render(<App />);
+    const nav = await screen.findByRole("navigation", { name: "Repository" });
+    fireEvent.click(within(nav).getByRole("button", { name: /Issues/ }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Add health endpoint/ }),
+    );
+    const remove = await screen.findByRole("button", {
+      name: "Remove worktrees",
+    });
+    await waitFor(() =>
+      expect((remove as HTMLButtonElement).disabled).toBe(false),
+    );
+    fireEvent.click(remove);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel removal" }));
+    expect(
+      invoke.mock.calls.some((c) => c[1].action === "worktrees_remove"),
+    ).toBe(false);
+    fireEvent.click(remove);
+    const confirm = screen.getByRole("button", { name: "Confirm removal" });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    await waitFor(() =>
+      expect(
+        invoke.mock.calls.filter((c) => c[1].action === "worktrees_remove"),
+      ).toHaveLength(1),
+    );
+    const calls = invoke.mock.calls.map((c) => c[1].action);
+    expect(calls.indexOf("close")).toBeLessThan(
+      calls.indexOf("worktrees_remove"),
+    );
+    expect(
+      invoke.mock.calls.find((c) => c[1].action === "worktrees_remove")![1]
+        .args,
+    ).toEqual({ taskId: task.id, confirm: true });
+    await act(async () => finish());
+    await screen.findByText(
+      "Worktrees removed. Branches and history retained.",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Remove worktrees" }),
+    ).toBeNull();
+    expect(screen.getByText("Conversation canvas")).toBeTruthy();
+    const composer = screen.getByLabelText(
+      "Issue comment",
+    ) as HTMLTextAreaElement;
+    expect(composer.disabled).toBe(true);
+    expect(
+      (screen.getByLabelText("Attach images") as HTMLInputElement).disabled,
+    ).toBe(true);
+    fireEvent.change(composer, {
+      target: { value: "Do not restart removed worktrees" },
+    });
+    fireEvent.submit(composer.closest("form")!);
+    expect(invoke.mock.calls.some((c) => c[1].action === "prompt")).toBe(false);
+  });
   it("keeps repository controls together without the root title or Local tag", async () => {
     render(<App />);
     await screen.findByRole("button", { name: "README.md" });

@@ -34,9 +34,13 @@ export function IssueThread({
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<Record<string, unknown> | null>(null);
   const [diff, setDiff] = useState<string | null>(null);
+  const [confirmRemoval, setConfirmRemoval] = useState(false);
   const locked = useRef(false);
   const snapshot = session.value;
   const current = snapshot?.task ?? task;
+  const removed = ["removed", "removing", "removal-failed"].includes(
+    current.status,
+  );
   const lines = transcript(snapshot ?? null);
   const working =
     snapshot?.status.type === "busy" ||
@@ -197,6 +201,7 @@ export function IssueThread({
               const text = comment;
               if (
                 !working &&
+                !removed &&
                 !attachments.reading &&
                 (text.trim() || attachments.images.length)
               )
@@ -222,16 +227,20 @@ export function IssueThread({
                 rows={4}
                 value={comment}
                 onChange={(event) => setComment(event.target.value)}
-                onPaste={busy ? undefined : attachments.paste}
-                disabled={!!busy}
+                onPaste={busy || removed ? undefined : attachments.paste}
+                disabled={!!busy || removed}
               />
-              <ImageAttachments attachments={attachments} disabled={!!busy} />
+              <ImageAttachments
+                attachments={attachments}
+                disabled={!!busy || removed}
+              />
               <div className="form-actions">
                 <button
                   className="btn btn-success"
                   disabled={
                     !!busy ||
                     working ||
+                    removed ||
                     attachments.reading ||
                     (!comment.trim() && !attachments.images.length)
                   }
@@ -244,16 +253,17 @@ export function IssueThread({
         </div>
         <aside className="issue-details">
           <h4>Worktree</h4>
-          {task.checkouts.map((checkout) => (
-            <button
-              className="link-button worktree-link"
-              key={checkout.path}
-              onClick={() => onCode(checkout.path)}
-            >
-              <Icon name="branch" />
-              {checkout.branch}
-            </button>
-          ))}
+          {!removed &&
+            task.checkouts.map((checkout) => (
+              <button
+                className="link-button worktree-link"
+                key={checkout.path}
+                onClick={() => onCode(checkout.path)}
+              >
+                <Icon name="branch" />
+                {checkout.branch}
+              </button>
+            ))}
           <hr />
           <h4>Run</h4>
           <p>{statusLabel(current.status)}</p>
@@ -271,7 +281,7 @@ export function IssueThread({
             </button>
             <button
               className="btn btn-default btn-sm"
-              disabled={!!busy}
+              disabled={!!busy || removed}
               onClick={() =>
                 void action("Closing", async () => {
                   await api("close", { taskId: task.id });
@@ -282,21 +292,76 @@ export function IssueThread({
             </button>
             <button
               className="btn btn-default btn-sm"
-              disabled={!!busy}
+              disabled={!!busy || removed}
               onClick={() =>
-                void action("Loading changes", async () =>
-                  setDiff(await api<string>("diff", { taskId: task.id })),
-                )
+                void action("Loading changes", async () => {
+                  setDiff(await api<string>("diff", { taskId: task.id }));
+                })
               }
             >
               View changes
             </button>
+            {!removed && (
+              <button
+                className="btn btn-default btn-sm"
+                disabled={!!busy || working}
+                onClick={() => setConfirmRemoval(true)}
+              >
+                Remove worktrees
+              </button>
+            )}
           </div>
+          {confirmRemoval && !removed && (
+            <div className="alert alert-warning">
+              <p>
+                Remove this task's clean worktrees? Branches and conversation
+                history stay. Modified, untracked, ignored or locked files block
+                removal. The idle worker will be released.
+              </p>
+              {task.checkouts.map((checkout) => (
+                <p key={checkout.path}>
+                  <code>{checkout.path}</code>
+                </p>
+              ))}
+              <button
+                className="btn btn-danger btn-sm"
+                disabled={!!busy || working}
+                onClick={() =>
+                  void action("Removing worktrees", async () => {
+                    await api("close", { taskId: task.id });
+                    await api("worktrees_remove", {
+                      taskId: task.id,
+                      confirm: true,
+                    });
+                    setConfirmRemoval(false);
+                  })
+                }
+              >
+                Confirm removal
+              </button>
+              <button
+                className="btn btn-default btn-sm"
+                disabled={!!busy}
+                onClick={() => setConfirmRemoval(false)}
+              >
+                Cancel removal
+              </button>
+            </div>
+          )}
+          {removed && (
+            <p className="muted">
+              {current.status === "removed"
+                ? "Worktrees removed. Branches and history retained."
+                : "Cleanup requires inspection. Worktree execution is disabled."}
+            </p>
+          )}
           <hr />
           <h4>Local review</h4>
           <button
             className="btn btn-default btn-sm"
-            disabled={!!busy || working || issue?.outcome !== "completed"}
+            disabled={
+              !!busy || working || removed || issue?.outcome !== "completed"
+            }
             onClick={onLocalReview}
           >
             Review and merge locally
@@ -313,6 +378,7 @@ export function IssueThread({
               disabled={
                 !!busy ||
                 working ||
+                removed ||
                 issue?.outcome !== "completed" ||
                 !!issue?.publication
               }

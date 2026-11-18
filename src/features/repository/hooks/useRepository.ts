@@ -11,7 +11,7 @@ export function useRepository(
   const inventory = useResource<Inventory>(
     project.id,
     () => api("repository_inventory", { projectId: project.id }),
-    3000,
+    browseEnabled ? 30_000 : 0,
   );
   const [choice, setChoice] = useState("");
   const [path, setPath] = useState("");

@@ -70,10 +70,10 @@ Normal pushes to `main` and pull requests run Windows/macOS CI without release s
 npm run release:version -- 0.6.1
 npm run check
 git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json
-git commit -m "Release 0.4.1"
-git tag v0.4.1
+git commit -m "Release 0.6.1"
+git tag v0.6.1
 git push origin main
-git push origin v0.4.1
+git push origin v0.6.1
 ```
 
 The tag must match every version file, point to a commit on `main`, and increase the released version. The release workflow checks and builds the app, creates a draft containing the installer, signature, and `latest.json`, verifies asset completeness, then publishes it as the latest stable release. Failed builds do not advertise an incomplete update. Published versions are never overwritten; ship a higher patch version to correct a release.

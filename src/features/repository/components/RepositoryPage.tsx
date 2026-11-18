@@ -169,7 +169,10 @@ export function RepositoryPage({
               task={selectedTask}
               issue={issues.find((i) => i.taskId === selectedTask.id)}
               onBack={() => setSelected(null)}
-              onChange={refresh}
+              onChange={() => {
+                refresh();
+                repository.inventory.refresh();
+              }}
               onLocalReview={() => changeTab("pulls")}
               onCode={(id) => {
                 setRequestedWorktree(id);

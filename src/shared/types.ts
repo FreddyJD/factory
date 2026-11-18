@@ -108,6 +108,9 @@ export function statusLabel(status: string) {
         ready: "Idle",
         publishing: "Publishing PR",
         interrupted: "Interrupted",
+        removed: "Worktrees removed",
+        removing: "Removing worktrees",
+        "removal-failed": "Cleanup needs inspection",
       } as Record<string, string>
     )[status] ?? status
   );

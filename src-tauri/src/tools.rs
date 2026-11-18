@@ -70,7 +70,7 @@ pub fn resolve(task: &Task, value: &str, group: bool) -> Result<PathBuf> {
         task.directory.join(supplied)
     };
     let allowed = task.checkouts.iter().any(|c| path.starts_with(&c.path));
-    if !allowed && !(group && path == task.directory) {
+    if !(allowed || group && path == task.directory) {
         return Err("Path is outside this task's checkout roots".into());
     }
     let mut ancestor = path.as_path();
@@ -84,11 +84,11 @@ pub fn resolve(task: &Task, value: &str, group: bool) -> Result<PathBuf> {
         return Err("A destination parent is not a directory".into());
     }
     let canonical = dunce::canonicalize(ancestor).map_err(|e| e.to_string())?;
-    if !task
+    if !(task
         .checkouts
         .iter()
         .any(|c| canonical.starts_with(&c.path))
-        && !(group && canonical == task.directory)
+        || group && canonical == task.directory)
     {
         return Err("Resolved path escapes the worktree".into());
     }
@@ -529,15 +529,13 @@ pub fn inspect(
                 .map(|p| globset::Glob::new(p).map(|g| g.compile_matcher()))
                 .transpose()
                 .map_err(|e| e.to_string())?;
-            let mut walk = ignore::WalkBuilder::new(&path);
-            walk.standard_filters(false)
-                .hidden(name == "glob")
-                .follow_links(false)
-                .filter_entry(|e| e.file_name() != ".git");
+            // Prune rejected directories before descent. Automatic ignore loading
+            // would bypass our worktree-only, bounded ignore-file validation.
+            let mut walk = walkdir::WalkDir::new(&path).follow_links(false).into_iter();
             let mut ignores = HashMap::<PathBuf, ignore::gitignore::Gitignore>::new();
             let mut output = Vec::new();
             let mut visited = 0;
-            for entry in walk.build() {
+            while let Some(entry) = walk.next() {
                 if cancel.is_cancelled() {
                     return Err("Cancelled".into());
                 }
@@ -548,7 +546,26 @@ pub fn inspect(
                 let Ok(entry) = entry else {
                     continue;
                 };
-                if !entry.file_type().is_some_and(|t| t.is_file()) {
+                let is_dir = entry.file_type().is_dir();
+                let hidden = entry.file_name().as_encoded_bytes().starts_with(b".");
+                #[cfg(windows)]
+                let hidden = hidden
+                    || (name == "glob" && {
+                        use std::os::windows::fs::MetadataExt;
+                        entry
+                            .metadata()
+                            .is_ok_and(|m| m.file_attributes() & 0x2 != 0)
+                    });
+                if entry.depth() > 0
+                    && (entry
+                        .file_name()
+                        .as_encoded_bytes()
+                        .eq_ignore_ascii_case(b".git")
+                        || (name == "glob" && hidden))
+                {
+                    if is_dir {
+                        walk.skip_current_dir();
+                    }
                     continue;
                 }
                 let relative = entry.path().strip_prefix(&path).unwrap_or(entry.path());
@@ -587,7 +604,7 @@ pub fn inspect(
                         }
                         ignores.insert(parent.into(), builder.build().map_err(|e| e.to_string())?);
                     }
-                    let matched = ignores[parent].matched_path_or_any_parents(entry.path(), false);
+                    let matched = ignores[parent].matched(entry.path(), is_dir);
                     if matched.is_ignore() {
                         ignored = true;
                     }
@@ -596,9 +613,18 @@ pub fn inspect(
                     }
                 }
                 if ignored {
+                    if is_dir {
+                        walk.skip_current_dir();
+                    }
                     continue;
                 }
-                if resolve(task, entry.path().to_str().unwrap_or(""), false).is_err() {
+                if resolve(task, entry.path().to_str().unwrap_or(""), true).is_err() {
+                    if is_dir {
+                        walk.skip_current_dir();
+                    }
+                    continue;
+                }
+                if !entry.file_type().is_file() {
                     continue;
                 }
                 if let Some(glob) = &glob {
@@ -1151,6 +1177,97 @@ mod tests {
         .unwrap();
         assert!(found.contains("main.js"));
         assert!(!found.contains("node_modules"));
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn ignored_directories_are_pruned_before_loading_nested_ignores() {
+        let (root, task) = fixture();
+        fs::create_dir_all(root.join("node_modules/package")).unwrap();
+        fs::write(root.join("node_modules/.gitignore"), "x".repeat(65_000)).unwrap();
+        fs::write(root.join("node_modules/package/a.js"), "needle").unwrap();
+        fs::write(root.join("main.js"), "needle").unwrap();
+        fs::write(root.join(".gitignore"), "node_modules/\n").unwrap();
+        for name in ["glob", "grep"] {
+            let found = inspect(
+                &task,
+                name,
+                &json!({"pattern":if name == "glob" { "**/*.js" } else { "needle" }}),
+                &CancellationToken::new(),
+                &|_, _| {},
+            )
+            .unwrap();
+            assert!(found.contains("main.js"), "{name}: {found}");
+            assert!(!found.contains("node_modules"), "{name}: {found}");
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn search_whitelists_require_an_admitted_parent() {
+        let (root, task) = fixture();
+        fs::create_dir_all(root.join("cache")).unwrap();
+        fs::write(root.join("cache/keep.txt"), "needle").unwrap();
+        fs::write(root.join("cache/drop.txt"), "needle").unwrap();
+        for (rules, visible) in [
+            ("cache/\n!cache/keep.txt\n", false),
+            ("cache/\n!cache/\ncache/*\n!cache/keep.txt\n", true),
+        ] {
+            fs::write(root.join(".gitignore"), rules).unwrap();
+            for name in ["glob", "grep"] {
+                let found = inspect(
+                    &task,
+                    name,
+                    &json!({"pattern":if name == "glob" { "**/*.txt" } else { "needle" }}),
+                    &CancellationToken::new(),
+                    &|_, _| {},
+                )
+                .unwrap();
+                assert_eq!(found.contains("keep.txt"), visible, "{name}: {found}");
+                assert!(!found.contains("drop.txt"), "{name}: {found}");
+            }
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn nested_search_ignores_and_hidden_files_keep_their_scope() {
+        let (root, task) = fixture();
+        fs::create_dir(root.join("src")).unwrap();
+        fs::write(root.join(".gitignore"), "*.log\n").unwrap();
+        fs::write(root.join("src/.ignore"), "!keep.log\n").unwrap();
+        fs::write(root.join("src/keep.log"), "needle").unwrap();
+        fs::write(root.join("src/drop.log"), "needle").unwrap();
+        fs::write(root.join(".hidden"), "needle").unwrap();
+        let found = inspect(
+            &task,
+            "grep",
+            &json!({"pattern":"needle"}),
+            &CancellationToken::new(),
+            &|_, _| {},
+        )
+        .unwrap();
+        assert!(found.contains("keep.log"));
+        assert!(!found.contains("drop.log"));
+        assert!(found.contains(".hidden"));
+        let found = inspect(
+            &task,
+            "glob",
+            &json!({"pattern":"**/*"}),
+            &CancellationToken::new(),
+            &|_, _| {},
+        )
+        .unwrap();
+        assert!(!found.contains(".hidden"));
+        let found = inspect(
+            &task,
+            "grep",
+            &json!({"path":"src","pattern":"needle","include":"*.log"}),
+            &CancellationToken::new(),
+            &|_, _| {},
+        )
+        .unwrap();
+        assert!(
+            found.contains("drop.log"),
+            "Parent ignores must not widen explicit search scope"
+        );
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
