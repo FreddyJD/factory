@@ -1,6 +1,7 @@
 import { ActivityDot } from "../../../shared/components/ActivityDot";
 import { activityAt, type FileActivity } from "../hooks/useFileActivity";
 import { useState } from "react";
+import type { Task } from "../../../shared/api";
 import type {
   Browse,
   Inventory,
@@ -12,11 +13,13 @@ import { Markdown } from "../../../shared/components/Markdown";
 export function CheckoutSelect({
   inventory,
   activity,
+  tasks = [],
   target,
   choose,
 }: {
   inventory?: Inventory;
   activity: FileActivity[];
+  tasks?: Task[];
   target?: Checkout;
   choose: (id: string) => void;
 }) {
@@ -52,18 +55,38 @@ export function CheckoutSelect({
         {inventory?.branches.length ?? 0} branches
       </span>
       {inventory?.targets
-        .filter((t) => t.id !== target?.id && activityAt(activity, t.path))
-        .map((t) => (
-          <button
-            key={t.id}
-            className="worktree-activity"
-            onClick={() => choose(t.id)}
-            title={"View active worktree: " + t.branch}
-          >
-            <ActivityDot activity={activityAt(activity, t.path)} />
-            <span>{t.branch}</span>
-          </button>
-        ))}
+        .filter(
+          (t) =>
+            !t.source &&
+            (activityAt(activity, t.path) ||
+              tasks.some(
+                (task) => task.id === t.taskId && task.status === "working",
+              )),
+        )
+        .map((t) => {
+          const latest = activity
+            .filter((item) => item.checkoutPath === t.path)
+            .sort((a, b) => b.observedAt - a.observedAt)[0];
+          return (
+            <button
+              key={t.id}
+              className="worktree-activity"
+              onClick={() => choose(t.id)}
+              title={"View active worktree: " + t.branch}
+              aria-pressed={t.id === target?.id}
+            >
+              <ActivityDot activity={activityAt(activity, t.path)} />
+              <span className="worktree-activity-summary">
+                <span>{t.branch}</span>
+                <small title={latest?.path}>
+                  {latest
+                    ? `${latest.access}: ${latest.path || "worktree root"}`
+                    : "Working…"}
+                </small>
+              </span>
+            </button>
+          );
+        })}
       <span className="live-label">
         <i />
         Live filesystem
@@ -75,6 +98,7 @@ export function CodeBrowser({
   project,
   activity,
   inventory,
+  tasks,
   choose,
   onNewIssue,
   target,
@@ -88,6 +112,7 @@ export function CodeBrowser({
   project: Project;
   activity: FileActivity[];
   inventory?: Inventory;
+  tasks?: Task[];
   choose: (id: string) => void;
   onNewIssue: () => void;
   target?: Checkout;
@@ -101,6 +126,24 @@ export function CodeBrowser({
   const [query, setQuery] = useState("");
   const [copyError, setCopyError] = useState("");
   const segments = path.split("/").filter(Boolean);
+  // The source view is the factory overview; isolated views stay checkout-specific.
+  const activityTargets = target?.source
+    ? (inventory?.targets ?? [target])
+    : target
+      ? [target]
+      : [];
+  function fileDots(filePath: string, directory: boolean) {
+    return activityTargets.map((checkout) => {
+      const observed = activityAt(activity, checkout.path, filePath, directory);
+      return observed ? (
+        <ActivityDot
+          key={checkout.id}
+          activity={observed}
+          checkout={checkout.branch}
+        />
+      ) : null;
+    });
+  }
   return (
     <>
       <div
@@ -110,6 +153,7 @@ export function CodeBrowser({
       >
         <CheckoutSelect
           inventory={inventory}
+          tasks={tasks}
           activity={activity}
           target={target}
           choose={choose}
@@ -237,14 +281,7 @@ export function CodeBrowser({
                                   />
                                 </span>
                                 {entry.name}
-                                <ActivityDot
-                                  activity={activityAt(
-                                    activity,
-                                    target.path,
-                                    entry.path,
-                                    entry.kind === "directory",
-                                  )}
-                                />
+                                {fileDots(entry.path, entry.kind === "directory")}
                               </button>
                             </td>
                             <td className="muted file-description">
@@ -276,14 +313,7 @@ export function CodeBrowser({
                 {data?.kind === "file" && (
                   <>
                     <div className="file-meta">
-                      <ActivityDot
-                        activity={activityAt(
-                          activity,
-                          target.path,
-                          path,
-                          false,
-                        )}
-                      />
+                      {fileDots(path, false)}
                       {data.content?.split("\n").length ?? 0} lines{" "}
                       <span className="muted">
                         {" "}

@@ -179,6 +179,7 @@ export function RepositoryPage({
             {tab === "history" ? (
               <CheckoutSelect
                 activity={activity}
+                tasks={tasks}
                 inventory={repository.inventory.value}
                 target={repository.target}
                 choose={repository.choose}
@@ -199,6 +200,7 @@ export function RepositoryPage({
         {tab === "code" && (
           <CodeBrowser
             activity={activity}
+            tasks={tasks}
             project={project}
             inventory={repository.inventory.value}
             choose={repository.choose}

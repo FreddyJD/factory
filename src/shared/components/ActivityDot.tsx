@@ -1,6 +1,12 @@
 import type { FileActivity } from "../../features/repository/hooks/useFileActivity";
 
-export function ActivityDot({ activity }: { activity?: FileActivity }) {
+export function ActivityDot({
+  activity,
+  checkout,
+}: {
+  activity?: FileActivity;
+  checkout?: string;
+}) {
   const label = activity
     ? {
         read: "Agent read",
@@ -10,7 +16,8 @@ export function ActivityDot({ activity }: { activity?: FileActivity }) {
       }[activity.access] +
       " " +
       (activity.path || "worktree root") +
-      " just now"
+      " just now" +
+      (checkout ? ` (${checkout})` : "")
     : undefined;
   return (
     <span

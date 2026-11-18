@@ -1403,6 +1403,18 @@ input[type="radio"] {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.worktree-activity-summary {
+  display: grid;
+  text-align: left;
+}
+.worktree-activity-summary > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.worktree-activity-summary small {
+  color: #57606a;
+}
 .checkout-controls {
   flex-wrap: wrap;
 }
