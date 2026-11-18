@@ -1,4 +1,5 @@
 pub mod connections;
+pub mod images;
 pub mod issues;
 pub mod local;
 pub mod mcp;
@@ -246,7 +247,10 @@ async fn factory_api(
         )),
         "snapshot" => factory.snapshot(text("taskId")?).await,
         "prompt" => {
-            factory.prompt(text("taskId")?, text("text")?).await?;
+            let images = images::parse(&args["images"])?;
+            factory
+                .prompt_with_images(text("taskId")?, text("text")?, &images)
+                .await?;
             Ok(json!(true))
         }
         "cancel" => {

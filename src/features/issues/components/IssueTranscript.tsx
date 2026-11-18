@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { TranscriptLine } from "../../../shared/api";
 import { wrapText, visibleRange } from "../transcript-canvas";
+import { ImageGallery } from "./ImageAttachments";
 export function IssueTranscript({ lines }: { lines: TranscriptLine[] }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const container = useRef<HTMLDivElement>(null);
@@ -124,6 +125,9 @@ export function IssueTranscript({ lines }: { lines: TranscriptLine[] }) {
         {lines.length} conversation entries. Use Text view for the full
         selectable transcript.
       </div>
+      <ImageGallery
+        images={lines.flatMap((line) => (line.image ? [line.image] : []))}
+      />
       {selectable && (
         <textarea
           readOnly

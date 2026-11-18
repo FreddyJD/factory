@@ -66,6 +66,67 @@ fn tools() -> Vec<Value> {
 }
 
 #[test]
+fn user_images_translate_to_every_protocol_and_survive_tool_continuations() {
+    let url = "data:image/png;base64,aW1hZ2U=";
+    let messages = vec![
+        json!({"role":"system","content":"Policy"}),
+        json!({"role":"user","content":[{"type":"text","text":"Fix this"},{"type":"image_url","image_url":{"url":url}}]}),
+        json!({"role":"assistant","tool_calls":[{"id":"call","function":{"name":"read","arguments":"{}"}}]}),
+        json!({"role":"tool","tool_call_id":"call","content":"result"}),
+    ];
+    let saved: Vec<Value> =
+        serde_json::from_slice(&serde_json::to_vec(&messages).unwrap()).unwrap();
+    for protocol in [
+        Protocol::Chat,
+        Protocol::Responses,
+        Protocol::Messages,
+        Protocol::MessagesV1,
+    ] {
+        let request = body(protocol, "fixture", &saved, &tools(), 8192).unwrap();
+        match protocol {
+            Protocol::Chat => assert_eq!(
+                request["messages"][1]["content"][1]["image_url"]["url"],
+                url
+            ),
+            Protocol::Responses => {
+                assert_eq!(request["input"][0]["content"][0]["type"], "input_text");
+                assert_eq!(
+                    request["input"][0]["content"][1],
+                    json!({"type":"input_image","image_url":url})
+                );
+            }
+            _ => assert_eq!(
+                request["messages"][0]["content"][1],
+                json!({"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW1hZ2U="}})
+            ),
+        }
+    }
+    assert_eq!(
+        chat_messages(&messages, false)[1]["content"],
+        messages[1]["content"]
+    );
+    for protocol in [Protocol::Responses, Protocol::Messages] {
+        let request = body(
+            protocol,
+            "fixture",
+            &[json!({"role":"user","content":[{"type":"image_url","image_url":{"url":url}}]})],
+            &[],
+            8192,
+        )
+        .unwrap();
+        assert!(request.to_string().contains("aW1hZ2U="));
+        assert!(body(
+            protocol,
+            "fixture",
+            &[json!({"role":"user","content":[{"type":"unknown"}]})],
+            &[],
+            8192
+        )
+        .is_err());
+    }
+}
+
+#[test]
 fn responses_tool_roundtrip_retains_final_encrypted_state_exactly_once() {
     for fragmented in [false, true] {
         let completion = stream(Protocol::Responses, response_events(), fragmented).unwrap();

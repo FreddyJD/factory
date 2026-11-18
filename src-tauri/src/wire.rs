@@ -79,6 +79,36 @@ fn string<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
         .as_str()
         .ok_or_else(|| format!("Provider {key} is missing or invalid"))
 }
+fn user_content(message: &Value, protocol: Protocol) -> Result<Vec<Value>> {
+    let parts = if let Some(text) = message["content"].as_str() {
+        vec![json!({"type":"text","text":text})]
+    } else {
+        message["content"]
+            .as_array()
+            .ok_or("Invalid user content")?
+            .clone()
+    };
+    parts
+        .iter()
+        .map(|part| match part["type"].as_str() {
+            Some("text") => Ok(if protocol == Protocol::Responses {
+                json!({"type":"input_text","text":string(part,"text")?})
+            } else {
+                json!({"type":"text","text":string(part,"text")?})
+            }),
+            Some("image_url") => {
+                let url = string(&part["image_url"], "url")?;
+                let (mime, data) = crate::images::data(url)?;
+                Ok(if protocol == Protocol::Responses {
+                    json!({"type":"input_image","image_url":url})
+                } else {
+                    json!({"type":"image","source":{"type":"base64","media_type":mime,"data":data}})
+                })
+            }
+            _ => Err("Unsupported user content part".into()),
+        })
+        .collect()
+}
 fn object_arguments(value: &str) -> Result<Value> {
     let parsed: Value =
         serde_json::from_str(value).map_err(|_| "Provider tool arguments are not complete JSON")?;
@@ -244,7 +274,7 @@ pub fn body(
             for message in messages {
                 match string(message,"role")?{
                 "system"=>instructions.push(string(message,"content")?.to_string()),
-                "user"=>input.push(json!({"role":"user","content":[{"type":"input_text","text":string(message,"content")?}]})),
+                "user"=>input.push(json!({"role":"user","content":user_content(message, protocol)?})),
                 "assistant"=>if let Some(items)=replay(protocol,model,message)?{input.extend(items.clone());}else{
                     if let Some(text)=message["content"].as_str().filter(|s|!s.is_empty()){input.push(json!({"role":"assistant","content":text}));}
                     for call in canonical_calls(message)?{input.push(json!({"type":"function_call","call_id":call.id,"name":call.name,"arguments":call.arguments}));}
@@ -268,10 +298,7 @@ pub fn body(
                         system.push(json!({"type":"text","text":string(message,"content")?}));
                         continue;
                     }
-                    "user" => (
-                        "user",
-                        vec![json!({"type":"text","text":string(message,"content")?})],
-                    ),
+                    "user" => ("user", user_content(message, protocol)?),
                     "tool" => (
                         "user",
                         vec![

@@ -78,6 +78,7 @@ struct CatalogModel {
     protocol: Protocol,
     output: usize,
     tools: bool,
+    vision: Option<bool>,
 }
 
 #[derive(Clone)]
@@ -501,7 +502,7 @@ impl Copilot {
         }
         *self.catalog.lock().await = (credential, models.clone());
         *self.catalog_at.lock().await = Some(Instant::now());
-        let catalog: serde_json::Map<String,Value> = models.into_iter().map(|entry|{let m=entry.model;(m.id.clone(),json!({"id":m.id,"name":m.name,"context":m.context,"protocol":entry.protocol.label(),"capabilities":{"toolcall":entry.tools}}))}).collect();
+        let catalog: serde_json::Map<String,Value> = models.into_iter().map(|entry|{let m=entry.model;(m.id.clone(),json!({"id":m.id,"name":m.name,"context":m.context,"protocol":entry.protocol.label(),"capabilities":{"toolcall":entry.tools,"vision":entry.vision}}))}).collect();
         Ok(
             json!({"all":[{"id":"github-copilot","models":catalog}],"connected":["github-copilot"],"notice":NOTICE}),
         )
@@ -563,6 +564,7 @@ impl Copilot {
                 && current.protocol == entry.protocol
                 && current.tools == entry.tools
                 && current.output == entry.output
+                && current.vision == entry.vision
         }) {
             return Err("Copilot model capabilities changed; refresh selection".into());
         }
@@ -570,6 +572,14 @@ impl Copilot {
     }
     pub async fn model(&self, id: &str) -> Result<Model> {
         Ok(self.catalog_entry(id).await?.model)
+    }
+    pub async fn check_images(&self, id: &str) -> Result<()> {
+        if self.catalog_entry(id).await?.vision == Some(false) {
+            return Err(
+                "The selected model does not support images. Choose an image-capable model.".into(),
+            );
+        }
+        Ok(())
     }
 }
 
@@ -652,6 +662,7 @@ fn catalog_models(value: &Value) -> Vec<CatalogModel> {
                 protocol,
                 output,
                 tools: m["capabilities"]["supports"]["tool_calls"] == true,
+                vision: m["capabilities"]["supports"]["vision"].as_bool(),
             })
         })
         .collect()
@@ -799,6 +810,10 @@ impl Inference for Copilot {
                     "This catalog model explicitly does not support coding tool calls".into(),
                 );
             }
+            let images = crate::images::has_images(&messages);
+            if images && entry.vision == Some(false) {
+                return Err("The selected model no longer supports images".into());
+            }
             let payload = wire::body(entry.protocol, model, &messages, &tools, entry.output)?;
             let (request, credential, used_token) = self
                 .request(reqwest::Method::POST, entry.protocol.path())
@@ -810,6 +825,9 @@ impl Inference for Copilot {
                 .header("X-Interaction-Id", uuid::Uuid::new_v4().to_string())
                 .json(&payload)
                 .timeout(Duration::from_secs(300));
+            if images {
+                request = request.header("Copilot-Vision-Request", "true");
+            }
             if matches!(entry.protocol, Protocol::Messages | Protocol::MessagesV1) {
                 request = request
                     .header("anthropic-version", "2023-06-01")
@@ -1101,6 +1119,7 @@ mod tests {
             protocol: Protocol::Responses,
             output: 8192,
             tools: true,
+            vision: Some(true),
         };
         let gate = provider.catalog_gate.lock().await;
         *provider.catalog.lock().await = (String::new(), vec![]);

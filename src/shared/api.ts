@@ -43,6 +43,8 @@ export interface Part {
   id: string;
   type: string;
   text?: string;
+  name?: string;
+  dataUrl?: string;
   tool?: string;
   state?: {
     status: string;
@@ -72,7 +74,7 @@ export interface ProviderCatalog {
         id: string;
         name: string;
         protocol?: "chat" | "responses" | "messages";
-        capabilities?: { toolcall?: boolean };
+        capabilities?: { toolcall?: boolean; vision?: boolean | null };
       }
     >;
   }[];
@@ -118,6 +120,7 @@ export function models(catalog: ProviderCatalog) {
 export interface TranscriptLine {
   kind: "user" | "assistant" | "tool" | "error";
   text: string;
+  image?: { name: string; dataUrl: string };
 }
 export function transcript(snapshot: Snapshot | null): TranscriptLine[] {
   if (!snapshot) return [];
@@ -126,6 +129,12 @@ export function transcript(snapshot: Snapshot | null): TranscriptLine[] {
     if (message.info.error)
       lines.push({ kind: "error", text: JSON.stringify(message.info.error) });
     for (const part of message.parts) {
+      if (part.type === "image" && part.dataUrl)
+        lines.push({
+          kind: "user",
+          text: `[Image: ${part.name ?? "Attached image"}]`,
+          image: { name: part.name ?? "Attached image", dataUrl: part.dataUrl },
+        });
       if (part.type === "text" && part.text)
         lines.push({
           kind: message.info.role === "user" ? "user" : "assistant",

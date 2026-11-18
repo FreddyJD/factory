@@ -26,6 +26,7 @@ fs2 = "0.4"
 futures-util = "0.3"
 globset = "0.4"
 ignore = "0.4"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 regex = "1"
 jsonschema = { version = "0.46", default-features = false }
 keyring = { version = "3.6", features = ["apple-native", "windows-native"] }

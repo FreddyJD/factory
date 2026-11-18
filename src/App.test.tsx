@@ -168,7 +168,7 @@ function handler(
     case "project_mcp":
       return {};
     case "issue_create":
-      return { ...task, title: args.title };
+      return task;
     default:
       throw Error(`Unexpected API operation: ${action}`);
   }
@@ -251,13 +251,13 @@ describe("repository-first application", () => {
     );
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "New issue" }));
-    const title = await screen.findByLabelText("Title");
+    const description = await screen.findByLabelText("Description");
+    expect(screen.queryByLabelText("Title")).toBeNull();
     await screen.findByRole("option", { name: "Fixture model" });
-    fireEvent.change(title, { target: { value: "Fix health endpoint" } });
     fireEvent.change(screen.getByLabelText("Description"), {
       target: { value: "Return 200 and add tests" },
     });
-    const form = title.closest("form")!;
+    const form = description.closest("form")!;
     fireEvent.submit(form);
     fireEvent.submit(form);
     await waitFor(() =>
@@ -269,12 +269,13 @@ describe("repository-first application", () => {
       (c) => c[1].action === "issue_create",
     )![1].args;
     expect(args).toMatchObject({
-      title: "Fix health endpoint",
       body: "Return 200 and add tests",
+      images: [],
       projectId: "project-a",
       nativeEdits: true,
       autoPr: false,
     });
+    expect(args).not.toHaveProperty("title");
     await act(async () => finish(task));
   });
   it("reopens the explicitly selected existing project", async () => {
@@ -536,10 +537,10 @@ describe("repository-first application", () => {
     );
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "New issue" }));
-    const title = await screen.findByLabelText("Title");
+    const description = await screen.findByLabelText("Description");
     await screen.findByRole("option", { name: "Local / test" });
-    fireEvent.change(title, { target: { value: "Local model issue" } });
-    fireEvent.submit(title.closest("form")!);
+    fireEvent.change(description, { target: { value: "Local model issue" } });
+    fireEvent.submit(description.closest("form")!);
     await waitFor(() =>
       expect(
         invoke.mock.calls.find((c) => c[1].action === "issue_create")?.[1].args
