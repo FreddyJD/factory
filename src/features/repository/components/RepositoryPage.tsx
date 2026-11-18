@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { api, type Task } from "../../../shared/api";
 import type { Project, Tab, Issue } from "../../../shared/types";
 import { useResource } from "../../../shared/hooks/useResource";
@@ -46,6 +46,16 @@ export function RepositoryPage({
     activity,
     tab === "code",
   );
+  const worktreeKey = JSON.stringify(
+    allTasks.map((task) => [
+      task.id,
+      task.checkouts.map((checkout) => checkout.path),
+    ]),
+  );
+  const refreshInventory = useEffectEvent(() => repository.inventory.refresh());
+  useEffect(() => {
+    refreshInventory();
+  }, [worktreeKey]);
   const factoryTasks = allTasks.filter((task) =>
     repository.inventory.value?.targets.some(
       (target) => target.taskId === task.id,
@@ -238,6 +248,7 @@ export function RepositoryPage({
             }}
           >
             <FactoryView
+              tasks={tasks}
               visualization={visualization}
               onSettings={onSettings}
               inventory={repository.inventory.value}

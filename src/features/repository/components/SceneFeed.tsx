@@ -3,22 +3,17 @@ import type { Checkout } from "../../../shared/types";
 import type { FileActivity } from "../hooks/useFileActivity";
 import type { ToolActivity } from "../hooks/useToolActivity";
 
-const colors = [
-  "#ad76db",
-  "#398b9c",
-  "#cb7551",
-  "#658c49",
-  "#bd6095",
-  "#647ed1",
-];
+import { stationColor } from "../production-line";
 
 export function SceneFeed({
+  seed = "",
   targets,
   calls,
   activity,
   choose,
   loading,
 }: {
+  seed?: string;
   targets: Checkout[];
   calls: ToolActivity[];
   activity: FileActivity[];
@@ -133,7 +128,7 @@ export function SceneFeed({
             )}
             <button
               style={{
-                color: colors[targets.indexOf(row.target) % colors.length],
+                color: stationColor(`${seed}:${row.target.id}`),
               }}
               onClick={() => choose(row.target.id)}
               title={row.target.branch}
