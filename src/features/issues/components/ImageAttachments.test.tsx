@@ -58,6 +58,7 @@ function setup(vision?: boolean) {
   render(
     <NewIssue
       project={project}
+      github={false}
       onCreated={onCreated}
       onCancel={vi.fn()}
       onSettings={vi.fn()}
@@ -176,6 +177,7 @@ describe("issue images", () => {
     render(
       <IssueThread
         task={{ ...task, title: "Old title" }}
+        github={false}
         onBack={vi.fn()}
         onCode={vi.fn()}
         onChange={vi.fn()}

@@ -19,6 +19,7 @@ export function IssueThread({
   onCode,
   onChange,
   onLocalReview,
+  github,
 }: {
   task: Task;
   issue?: Issue;
@@ -26,6 +27,7 @@ export function IssueThread({
   onCode: (path: string) => void;
   onChange: () => void;
   onLocalReview: () => void;
+  github: boolean | undefined;
 }) {
   const session = useIssue(task.id);
   const [comment, setComment] = useState("");
@@ -148,7 +150,7 @@ export function IssueThread({
               <pre className="diff-view">{diff || "No tracked changes."}</pre>
             </div>
           )}
-          {preview && (
+          {github && preview && (
             <div className="panel">
               <div className="panel-heading">Create draft pull request</div>
               <div className="panel-body">
@@ -355,47 +357,59 @@ export function IssueThread({
                 : "Cleanup requires inspection. Worktree execution is disabled."}
             </p>
           )}
-          <hr />
-          <h4>Local review</h4>
-          <button
-            className="btn btn-default btn-sm"
-            disabled={
-              !!busy || working || removed || issue?.outcome !== "completed"
-            }
-            onClick={onLocalReview}
-          >
-            Review and merge locally
-          </button>
-          <hr />
-          <h4>Pull request</h4>
-          {issue?.publication?.url ? (
-            <a href={issue.publication.url} target="_blank" rel="noreferrer">
-              #{issue.publication.number} Draft pull request
-            </a>
-          ) : (
-            <button
-              className="btn btn-default btn-sm"
-              disabled={
-                !!busy ||
-                working ||
-                removed ||
-                issue?.outcome !== "completed" ||
-                !!issue?.publication
-              }
-              onClick={() =>
-                void action("Preparing PR", async () =>
-                  setPreview(await api("pr_preview", { taskId: task.id })),
-                )
-              }
-            >
-              Create draft PR
-            </button>
+          {github === false && (
+            <>
+              <hr />
+              <h4>Local review</h4>
+              <button
+                className="btn btn-default btn-sm"
+                disabled={
+                  !!busy || working || removed || issue?.outcome !== "completed"
+                }
+                onClick={onLocalReview}
+              >
+                Review and merge locally
+              </button>
+            </>
           )}
-          {issue?.publication?.state && (
-            <p className="muted">{issue.publication.state}</p>
-          )}
-          {issue?.publication?.error && (
-            <p className="text-danger">{issue.publication.error}</p>
+          {github === true && (
+            <>
+              <hr />
+              <h4>Pull request</h4>
+              {issue?.publication?.url ? (
+                <a
+                  href={issue.publication.url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  #{issue.publication.number} Draft pull request
+                </a>
+              ) : (
+                <button
+                  className="btn btn-default btn-sm"
+                  disabled={
+                    !!busy ||
+                    working ||
+                    removed ||
+                    issue?.outcome !== "completed" ||
+                    !!issue?.publication
+                  }
+                  onClick={() =>
+                    void action("Preparing PR", async () =>
+                      setPreview(await api("pr_preview", { taskId: task.id })),
+                    )
+                  }
+                >
+                  Create draft PR
+                </button>
+              )}
+              {issue?.publication?.state && (
+                <p className="muted">{issue.publication.state}</p>
+              )}
+              {issue?.publication?.error && (
+                <p className="text-danger">{issue.publication.error}</p>
+              )}
+            </>
           )}
           <hr />
           <h4>Execution</h4>
