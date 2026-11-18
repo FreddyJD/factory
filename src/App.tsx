@@ -9,8 +9,10 @@ import { ProjectSidebar } from "./features/projects/components/ProjectSidebar";
 import { RepositoryPage } from "./features/repository/components/RepositoryPage";
 import { SettingsView } from "./features/settings/components/SettingsView";
 import { useAppUpdates } from "./features/settings/hooks/useAppUpdates";
+import { useFileActivity } from "./features/repository/hooks/useFileActivity";
 
 export function App() {
+  const activity = useFileActivity();
   const projects = useProjects();
   const [section, setSection] = useState<"repository" | "settings">(
     "repository",
@@ -100,6 +102,7 @@ export function App() {
             <RepositoryPage
               key={projects.project.id}
               project={projects.project}
+              activity={activity}
               tasks={projectTasks}
               issues={projects.status.value?.issues ?? []}
               tab={tab}

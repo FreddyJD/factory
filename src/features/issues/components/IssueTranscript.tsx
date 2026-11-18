@@ -1,135 +1,122 @@
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import type { TranscriptLine } from "../../../shared/api";
-import { wrapText, visibleRange } from "../transcript-canvas";
+import { Markdown } from "../../../shared/components/Markdown";
+
+function ToolCall({
+  tool,
+}: {
+  tool: Extract<TranscriptLine, { kind: "tool" }>["tool"];
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const input =
+    tool.input && typeof tool.input === "object"
+      ? (tool.input as Record<string, unknown>)
+      : {};
+  const summary =
+    input.filePath ??
+    input.command ??
+    input.pattern ??
+    input.url ??
+    (tool.title !== tool.name ? tool.title : "");
+  return (
+    <details
+      className="tool-call"
+      data-status={tool.status}
+      onToggle={(event) => setExpanded(event.currentTarget.open)}
+    >
+      <summary>
+        <code>{tool.name}</code>
+        <span className="tool-call-summary">
+          {typeof summary === "string" ? summary : ""}
+        </span>
+        <span className="tool-call-status">{tool.status}</span>
+      </summary>
+      {expanded && (
+        <div className="tool-call-body">
+          <h4>Input</h4>
+          <pre tabIndex={0}>
+            {tool.input === undefined
+              ? "Input was not recorded."
+              : JSON.stringify(tool.input, null, 2)}
+          </pre>
+          <h4>{tool.error != null ? "Error" : "Output"}</h4>
+          <pre
+            tabIndex={0}
+            className={tool.error != null ? "text-danger" : undefined}
+          >
+            {tool.error ??
+              tool.output ??
+              (tool.status === "running" || tool.status === "pending"
+                ? "Waiting for tool result..."
+                : "Output was not recorded.")}
+            {tool.output === "" && tool.error == null ? "(empty output)" : ""}
+          </pre>
+        </div>
+      )}
+    </details>
+  );
+}
+
 export function IssueTranscript({ lines }: { lines: TranscriptLine[] }) {
-  const canvas = useRef<HTMLCanvasElement>(null);
   const container = useRef<HTMLDivElement>(null);
-  const current = useRef(lines);
-  current.current = lines;
-  const redraw = useRef(() => {});
+  const follow = useRef(true);
   const [selectable, setSelectable] = useState(false);
-  useEffect(() => {
-    const element = canvas.current;
-    const viewport = container.current;
-    if (!element || !viewport) return;
-    const ctx = element.getContext("2d");
-    if (!ctx) return;
-    let frame = 0;
-    let total = 0;
-    let previousLines: TranscriptLine[] = [];
-    let rows: { text: string; heading: boolean; kind: string }[] = [];
-    let previousWidth = 0;
-    const content = element.parentElement!;
-    const fontFamily = getComputedStyle(viewport).fontFamily;
-    function draw() {
-      frame = 0;
-      const width = viewport!.clientWidth;
-      const height = viewport!.clientHeight;
-      const dpr = window.devicePixelRatio || 1;
-      if (previousWidth !== width || previousLines !== current.current) {
-        rows = [];
-        previousWidth = width;
-        ctx!.font = `13px ${fontFamily}`;
-        for (const line of current.current) {
-          rows.push({
-            text:
-              line.kind === "user"
-                ? "You commented"
-                : line.kind === "assistant"
-                  ? "Factory"
-                  : line.kind === "error"
-                    ? "Error"
-                    : "Tool activity",
-            heading: true,
-            kind: line.kind,
-          });
-          for (const text of wrapText(
-            line.text,
-            Math.max(100, width - 48),
-            (text) => ctx!.measureText(text).width,
-          ))
-            rows.push({ text, heading: false, kind: line.kind });
-          rows.push({ text: "", heading: false, kind: line.kind });
-        }
-      }
-      const bottom = viewport!.scrollTop + height >= total - 40;
-      total = Math.max(height, rows.length * 22 + 28);
-      content.style.height = `${total}px`;
-      if (bottom && current.current !== previousLines)
-        viewport!.scrollTop = total;
-      previousLines = current.current;
-      const scroll = viewport!.scrollTop;
-      element!.style.transform = `translateY(${scroll}px)`;
-      element!.style.width = `${width}px`;
-      element!.style.height = `${height}px`;
-      element!.width = width * dpr;
-      element!.height = height * dpr;
-      ctx!.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx!.fillStyle = "#fff";
-      ctx!.fillRect(0, 0, width, height);
-      const range = visibleRange(scroll, height, rows.length, 22);
-      for (let i = range.first; i < range.last; i++) {
-        const row = rows[i];
-        ctx!.font = row.heading
-          ? `600 11px ${fontFamily}`
-          : `13px ${fontFamily}`;
-        ctx!.fillStyle =
-          row.kind === "error"
-            ? "#a94442"
-            : row.heading
-              ? "#57606a"
-              : "#24292f";
-        ctx!.fillText(row.text, 24, 24 + i * 22 - scroll);
-      }
-    }
-    const request = () => {
-      if (!frame) frame = requestAnimationFrame(draw);
-    };
-    const fontsLoaded = () => {
-      // Rewrap using the loaded font's metrics, not the temporary fallback.
-      previousWidth = 0;
-      request();
-    };
-    document.fonts.addEventListener("loadingdone", fontsLoaded);
-    redraw.current = request;
-    const observer = new ResizeObserver(request);
-    observer.observe(viewport);
-    viewport.addEventListener("scroll", request);
-    request();
-    return () => {
-      document.fonts.removeEventListener("loadingdone", fontsLoaded);
-      observer.disconnect();
-      viewport.removeEventListener("scroll", request);
-      cancelAnimationFrame(frame);
-      redraw.current = () => {};
-    };
-  }, []);
-  useEffect(() => redraw.current(), [lines]);
+  useLayoutEffect(() => {
+    if (follow.current && container.current)
+      container.current.scrollTop = container.current.scrollHeight;
+  }, [lines]);
   return (
     <>
       <div className="transcript-header">
         <strong>Conversation</strong>
         <button
           className="link-button"
-          onClick={() => setSelectable((v) => !v)}
+          onClick={() => setSelectable((value) => !value)}
         >
-          {selectable ? "Canvas view" : "Text view"}
+          {selectable ? "Hide text view" : "Text view"}
         </button>
       </div>
       <div
         ref={container}
-        className="issue-canvas-viewport"
+        className="issue-transcript"
         tabIndex={0}
         role="region"
         aria-label="Issue conversation"
+        onClickCapture={(event) => {
+          if ((event.target as HTMLElement).closest("summary"))
+            follow.current = false;
+        }}
+        onScroll={(event) => {
+          const element = event.currentTarget;
+          follow.current =
+            element.scrollTop + element.clientHeight >=
+            element.scrollHeight - 40;
+        }}
       >
-        <div>
-          <canvas ref={canvas} aria-hidden="true" />
-        </div>
-      </div>
-      <div className="sr-only" role="status" aria-live="polite">
-        {lines.length} conversation entries. Use Text view for the full
-        selectable transcript.
+        {lines.length === 0 && (
+          <p className="muted">
+            The conversation will appear here when the agent starts.
+          </p>
+        )}
+        {lines.map((line) =>
+          line.kind === "tool" ? (
+            <ToolCall key={line.id} tool={line.tool} />
+          ) : (
+            <article
+              key={line.id}
+              className={"transcript-message " + line.kind}
+            >
+              <h4>
+                {line.kind === "user"
+                  ? "You commented"
+                  : line.kind === "error"
+                    ? "Error"
+                    : "Factory"}
+              </h4>
+              <Markdown text={line.text} />
+            </article>
+          ),
+        )}
       </div>
       {selectable && (
         <textarea
@@ -137,7 +124,7 @@ export function IssueTranscript({ lines }: { lines: TranscriptLine[] }) {
           aria-label="Conversation text"
           className="form-control conversation-text"
           value={lines
-            .map((l) => `${l.kind.toUpperCase()}\n${l.text}`)
+            .map((line) => line.kind.toUpperCase() + "\n" + line.text)
             .join("\n\n")}
         />
       )}
