@@ -145,11 +145,19 @@ async fn factory_api(
         "issue_create" => Ok(json!(factory.create_issue(&args).await?)),
         "local_reviews" => {
             let project = factory.repositories.project(text("projectId")?).await?;
+            let tasks = workspace::tasks(&factory.root)?;
             let list = issues::list(&factory.root)?
                 .into_iter()
                 .filter(|i| {
                     i.project_id == project.id
                         && (i.outcome == "completed" || !i.local_merge.is_null())
+                        && tasks.iter().any(|t| {
+                            t.id == i.task_id
+                                && !matches!(
+                                    t.status.as_str(),
+                                    "removed" | "removing" | "removal-failed"
+                                )
+                        })
                 })
                 .collect::<Vec<_>>();
             let remote = repository::git(&project.path, &["remote", "get-url", "origin"])
@@ -256,6 +264,12 @@ async fn factory_api(
         "close" => {
             factory.close(text("taskId")?).await?;
             Ok(json!(true))
+        }
+        "worktrees_remove" => {
+            if args["confirm"] != true {
+                return Err("Explicit clean-worktree removal confirmation required".into());
+            }
+            Ok(json!(factory.remove_worktrees(text("taskId")?).await?))
         }
         "permission" => {
             factory

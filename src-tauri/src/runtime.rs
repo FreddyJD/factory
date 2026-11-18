@@ -329,13 +329,9 @@ impl Factory {
                 "Four local execution slots are in use. Close a stopped task first.".into(),
             );
         }
-        let mut task = workspace::load_task(&self.root, id)?;
-        if task.checkouts.is_empty()
-            || matches!(task.status.as_str(), "allocating" | "allocation-failed")
-        {
-            return Err("Incomplete worktree allocation; execution refused".into());
-        }
-        workspace::validate_links(&task.directory)?;
+        // Validate the ID before opening its lease; validate checkout state only
+        // after acquiring it so removal cannot race a previously loaded task.
+        workspace::task_record(&self.root, id)?;
         let directory = self.root.join("locks");
         fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
         let lease = OpenOptions::new()
@@ -348,6 +344,13 @@ impl Factory {
         lease
             .try_lock_exclusive()
             .map_err(|_| "Task is owned by another Factory process".to_string())?;
+        let mut task = workspace::load_task(&self.root, id)?;
+        if task.checkouts.is_empty()
+            || matches!(task.status.as_str(), "allocating" | "allocation-failed")
+        {
+            return Err("Incomplete worktree allocation; execution refused".into());
+        }
+        workspace::validate_links(&task.directory)?;
         let path = self.root.join("sessions").join(format!("{id}.json"));
         let history = if path.exists() {
             let mut h: History =
@@ -508,7 +511,26 @@ impl Factory {
         result
     }
     pub async fn prepare(&self, path: &Path, title: &str, model: &str) -> Result<Task> {
-        workspace::create_task(&self.root, &workspace::discover(path)?, title, model)
+        let (root, path, title, model) = (
+            self.root.clone(),
+            path.to_path_buf(),
+            title.to_string(),
+            model.to_string(),
+        );
+        tokio::task::spawn_blocking(move || workspace::prepare_task(&root, &path, &title, &model))
+            .await
+            .map_err(|e| e.to_string())?
+    }
+    pub async fn remove_worktrees(&self, id: &str) -> Result<Task> {
+        let sessions = self.sessions.lock().await;
+        if sessions.contains_key(id) {
+            return Err("Release the worker before removing worktrees".into());
+        }
+        drop(sessions);
+        let (root, id) = (self.root.clone(), id.to_string());
+        tokio::task::spawn_blocking(move || workspace::remove_task(&root, &id))
+            .await
+            .map_err(|e| e.to_string())?
     }
     pub async fn create(&self, path: &Path, title: &str, model: &str) -> Result<Task> {
         let _guard = self.admission.lock().await;
@@ -665,7 +687,15 @@ impl Factory {
     pub async fn snapshot(&self, id: &str) -> Result<Value> {
         let existing = self.sessions.lock().await.get(id).cloned();
         let Some(session) = existing else {
-            let mut task = workspace::load_task(&self.root, id)?;
+            let record = workspace::task_record(&self.root, id)?;
+            let mut task = if matches!(
+                record.status.as_str(),
+                "removed" | "removing" | "removal-failed"
+            ) {
+                record
+            } else {
+                workspace::load_task(&self.root, id)?
+            };
             if matches!(task.status.as_str(), "working" | "needs-you" | "publishing") {
                 let directory = self.root.join("locks");
                 fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
@@ -677,11 +707,14 @@ impl Factory {
                     .open(directory.join(format!("{id}.lock")))
                     .map_err(|e| e.to_string())?;
                 if lease.try_lock_exclusive().is_ok() {
-                    task.status = "interrupted".into();
-                    workspace::save_task(&self.root, &task)?;
-                    if let Ok(mut issue) = issues::load(&self.root, id) {
-                        issue.outcome = "interrupted".into();
-                        issues::save(&self.root, &issue)?;
+                    task = workspace::task_record(&self.root, id)?;
+                    if matches!(task.status.as_str(), "working" | "needs-you" | "publishing") {
+                        task.status = "interrupted".into();
+                        workspace::save_task(&self.root, &task)?;
+                        if let Ok(mut issue) = issues::load(&self.root, id) {
+                            issue.outcome = "interrupted".into();
+                            issues::save(&self.root, &issue)?;
+                        }
                     }
                 }
             }
@@ -1052,7 +1085,13 @@ async fn execute(
                 .map_err(|e| e.to_string())?
         }
         "write" | "edit" | "apply_patch" => {
-            let changes = tools::plan(&task, &call.name, args)?;
+            let plan_task = task.clone();
+            let name = call.name.clone();
+            let plan_args = args.clone();
+            let changes =
+                tokio::task::spawn_blocking(move || tools::plan(&plan_task, &name, &plan_args))
+                    .await
+                    .map_err(|e| e.to_string())??;
             let preview: Vec<_> = changes
                 .iter()
                 .map(|c| json!({"path":c.path,"before":c.before,"after":c.after}))
@@ -1202,7 +1241,16 @@ async fn explore(
                     .map_err(|e| e.to_string())
                     .and_then(|schema| schema.validate(&args).map_err(|e| e.to_string()))
                 {
-                    Ok(()) => tools::inspect(&task, &call.name, &args, &cancel),
+                    Ok(()) => {
+                        let task = task.clone();
+                        let name = call.name.clone();
+                        let cancel = cancel.clone();
+                        tokio::task::spawn_blocking(move || {
+                            tools::inspect(&task, &name, &args, &cancel)
+                        })
+                        .await
+                        .map_err(|e| e.to_string())?
+                    }
                     Err(error) => Err(error),
                 }
             } else {
@@ -1281,6 +1329,33 @@ pub async fn review(root: &Path, id: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn removed_worktrees_keep_snapshots_but_cannot_reopen_workers() {
+        let root = std::env::temp_dir().join(format!("factory-removal-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("source")).unwrap();
+        fs::create_dir(root.join("data")).unwrap();
+        let root = dunce::canonicalize(root).unwrap();
+        workspace::initialize_empty(&root.join("source")).unwrap();
+        let factory = Factory::new(root.join("data"));
+        let task = factory
+            .prepare(&root.join("source"), "remove", "fixture")
+            .await
+            .unwrap();
+        let session = factory.worker(&task.id).await.unwrap();
+        assert!(factory.remove_worktrees(&task.id).await.is_err());
+        factory.close(&task.id).await.unwrap();
+        // A retained actor still owns the file lease after removal from the map.
+        assert!(factory.remove_worktrees(&task.id).await.is_err());
+        drop(session);
+        factory.remove_worktrees(&task.id).await.unwrap();
+        assert_eq!(
+            factory.snapshot(&task.id).await.unwrap()["task"]["status"],
+            "removed"
+        );
+        assert!(factory.worker(&task.id).await.is_err());
+        assert_eq!(factory.summaries().await.unwrap()[0].status, "removed");
+        fs::remove_dir_all(root).unwrap();
+    }
     struct Scripted {
         calls: std::sync::atomic::AtomicUsize,
     }

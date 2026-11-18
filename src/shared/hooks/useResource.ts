@@ -21,10 +21,10 @@ export function useResource<T>(
     let disposed = false,
       running = false,
       queued = false;
-    const refresh = async () => {
+    const refresh = async (explicit = true) => {
       if (disposed || document.visibilityState === "hidden") return;
       if (running) {
-        queued = true;
+        if (explicit) queued = true;
         return;
       }
       if (loader.current.key !== key) return;
@@ -57,7 +57,7 @@ export function useResource<T>(
     }));
     void refresh();
     const timer = interval
-      ? window.setInterval(() => void refresh(), interval)
+      ? window.setInterval(() => void refresh(false), interval)
       : 0;
     const focus = () => void refresh();
     window.addEventListener("focus", focus);

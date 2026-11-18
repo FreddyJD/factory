@@ -1,6 +1,6 @@
 [package]
 name = "git-factory"
-version = "0.6.0"
+version = "0.6.1"
 description = "A controlled delivery line for software change"
 edition = "2021"
 rust-version = "1.90"
@@ -31,13 +31,14 @@ jsonschema = { version = "0.46", default-features = false }
 keyring = { version = "3.6", features = ["apple-native", "windows-native"] }
 rmcp = { version = "3.11", default-features = false, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
 libc = "0.2"
-process-wrap = { version = "10", features = ["tokio1", "process-group", "job-object"] }
+process-wrap = { version = "10", features = ["std", "tokio1", "process-group", "job-object"] }
 open = "5"
 reqwest = { version = "0.13", default-features = false, features = ["json", "query", "stream", "rustls"] }
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 uuid = { version = "1", features = ["v4", "serde"] }
+walkdir = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = [] }
