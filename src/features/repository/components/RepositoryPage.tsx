@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { Task } from "../../../shared/api";
 import type { Project, Tab, Issue } from "../../../shared/types";
 import { Icon } from "../../../shared/components/Icon";
+import type { FileActivity } from "../hooks/useFileActivity";
 import { useRepository } from "../hooks/useRepository";
 import { CodeBrowser, CheckoutSelect } from "./CodeBrowser";
 import { HistoryView } from "./HistoryView";
@@ -12,6 +13,7 @@ import { PullRequestsView } from "../../pull-requests/components/PullRequestsVie
 
 export function RepositoryPage({
   project,
+  activity,
   tasks,
   issues,
   tab,
@@ -20,6 +22,7 @@ export function RepositoryPage({
   onSettings,
 }: {
   project: Project;
+  activity: FileActivity[];
   tasks: Task[];
   issues: Issue[];
   tab: Tab;
@@ -27,7 +30,7 @@ export function RepositoryPage({
   refresh: () => void;
   onSettings: () => void;
 }) {
-  const repository = useRepository(project, tab === "code");
+  const repository = useRepository(project, tab === "code", activity);
   const [selected, setSelected] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [createdTask, setCreatedTask] = useState<Task | null>(null);
@@ -98,6 +101,7 @@ export function RepositoryPage({
         <div className="repository-actionbar">
           {tab === "code" || tab === "history" ? (
             <CheckoutSelect
+              activity={activity}
               inventory={repository.inventory.value}
               target={repository.target}
               choose={repository.choose}
@@ -117,6 +121,7 @@ export function RepositoryPage({
         {tab === "code" && (
           <CodeBrowser
             project={project}
+            activity={activity}
             target={repository.target}
             path={repository.path}
             setPath={repository.setPath}
