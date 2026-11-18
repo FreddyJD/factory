@@ -45,16 +45,101 @@ pub struct Completion {
     pub state: Option<Value>,
 }
 
+#[derive(Debug)]
+pub enum InferenceError {
+    ContextOverflow,
+    Other(String),
+}
+impl std::fmt::Display for InferenceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ContextOverflow => {
+                f.write_str("Provider context window exceeded; no tools executed")
+            }
+            Self::Other(message) => f.write_str(message),
+        }
+    }
+}
+impl std::error::Error for InferenceError {}
+impl From<String> for InferenceError {
+    fn from(value: String) -> Self {
+        Self::Other(value)
+    }
+}
+impl From<&str> for InferenceError {
+    fn from(value: &str) -> Self {
+        Self::Other(value.into())
+    }
+}
+pub type InferenceResult = std::result::Result<Completion, InferenceError>;
+
+// Only known structured codes on a rejected HTTP request permit context recovery.
+// Never expose error bodies: they may contain credentials or echoed user content.
+fn context_error(value: &Value) -> bool {
+    [
+        value["error"]["code"].as_str(),
+        value["error"]["type"].as_str(),
+        value["code"].as_str(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|code| {
+        matches!(
+            code,
+            "context_length_exceeded"
+                | "context_window_exceeded"
+                | "max_prompt_tokens_exceeded"
+                | "prompt_too_long"
+                | "input_too_long"
+        )
+    })
+}
+
+pub async fn inference_error(
+    response: reqwest::Response,
+    fallback: String,
+    cancel: CancellationToken,
+) -> InferenceError {
+    if !matches!(response.status().as_u16(), 400 | 413 | 422) {
+        return fallback.into();
+    }
+    let read = async {
+        let mut bytes = Vec::new();
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let Ok(chunk) = chunk else {
+                return false;
+            };
+            if bytes.len() + chunk.len() > 16_384 {
+                return false;
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        serde_json::from_slice::<Value>(&bytes).is_ok_and(|value| context_error(&value))
+    };
+    tokio::select! { biased;
+        _ = cancel.cancelled() => "Cancelled".into(),
+        result = tokio::time::timeout(Duration::from_secs(5), read) => {
+            if result.unwrap_or(false) { InferenceError::ContextOverflow } else { fallback.into() }
+        }
+    }
+}
+
 pub trait Inference: Send + Sync {
+    fn limits<'a>(&'a self, model: &'a Model) -> BoxFuture<'a, Result<crate::context::Limits>> {
+        Box::pin(async move { Ok(crate::context::Limits::window(model.context)) })
+    }
+    #[allow(clippy::too_many_arguments)]
     fn complete<'a>(
         &'a self,
         model: &'a str,
         messages: Vec<Value>,
         tools: Vec<Value>,
+        output: Option<usize>,
         initiator: &'a str,
         cancel: CancellationToken,
         deltas: mpsc::Sender<String>,
-    ) -> BoxFuture<'a, Result<Completion>>;
+    ) -> BoxFuture<'a, InferenceResult>;
 }
 
 #[derive(Serialize, Deserialize)]
@@ -77,6 +162,7 @@ struct CatalogModel {
     model: Model,
     protocol: Protocol,
     output: usize,
+    input: usize,
     tools: bool,
     vision: Option<bool>,
 }
@@ -564,6 +650,7 @@ impl Copilot {
                 && current.protocol == entry.protocol
                 && current.tools == entry.tools
                 && current.output == entry.output
+                && current.input == entry.input
                 && current.vision == entry.vision
         }) {
             return Err("Copilot model capabilities changed; refresh selection".into());
@@ -648,11 +735,27 @@ fn catalog_models(value: &Value) -> Vec<CatalogModel> {
                 .as_u64()
                 .unwrap_or(8192)
                 .clamp(1, 8192) as usize;
-            let context = limits["max_prompt_tokens"]
+            let context = limits["max_context_window_tokens"]
                 .as_u64()
-                .or_else(|| limits["max_context_window_tokens"].as_u64())
+                .or_else(|| limits["max_prompt_tokens"].as_u64())
                 .unwrap_or(32_000)
-                .clamp(1024, 2_000_000) as usize;
+                .clamp(1, 2_000_000) as usize;
+            let output = if limits["max_context_window_tokens"].is_u64()
+                || !limits["max_prompt_tokens"].is_u64()
+            {
+                output.min((context / 4).max(1))
+            } else {
+                output
+            };
+            let input = limits["max_prompt_tokens"]
+                .as_u64()
+                .map(|n| n.min(2_000_000) as usize)
+                .unwrap_or(context.saturating_sub(output))
+                .min(if limits["max_context_window_tokens"].is_u64() {
+                    context.saturating_sub(output)
+                } else {
+                    context
+                });
             Some(CatalogModel {
                 model: Model {
                     id: id.into(),
@@ -661,6 +764,7 @@ fn catalog_models(value: &Value) -> Vec<CatalogModel> {
                 },
                 protocol,
                 output,
+                input,
                 tools: m["capabilities"]["supports"]["tool_calls"] == true,
                 vision: m["capabilities"]["supports"]["vision"].as_bool(),
             })
@@ -793,15 +897,25 @@ impl StreamDecoder {
 }
 
 impl Inference for Copilot {
+    fn limits<'a>(&'a self, model: &'a Model) -> BoxFuture<'a, Result<crate::context::Limits>> {
+        Box::pin(async move {
+            let entry = self.catalog_entry(&model.id).await?;
+            Ok(crate::context::Limits {
+                input: entry.input,
+                output: entry.output,
+            })
+        })
+    }
     fn complete<'a>(
         &'a self,
         model: &'a str,
         messages: Vec<Value>,
         tools: Vec<Value>,
+        output: Option<usize>,
         initiator: &'a str,
         cancel: CancellationToken,
         deltas: mpsc::Sender<String>,
-    ) -> BoxFuture<'a, Result<Completion>> {
+    ) -> BoxFuture<'a, InferenceResult> {
         Box::pin(async move {
             let entry = self.catalog_entry(model).await?;
             let catalog_guard = self.catalog_gate.lock().await;
@@ -814,7 +928,13 @@ impl Inference for Copilot {
             if images && entry.vision == Some(false) {
                 return Err("The selected model no longer supports images".into());
             }
-            let payload = wire::body(entry.protocol, model, &messages, &tools, entry.output)?;
+            let payload = wire::body(
+                entry.protocol,
+                model,
+                &messages,
+                &tools,
+                output.unwrap_or(entry.output).clamp(1, entry.output),
+            )?;
             let (request, credential, used_token) = self
                 .request(reqwest::Method::POST, entry.protocol.path())
                 .await?;
@@ -838,12 +958,15 @@ impl Inference for Copilot {
                 self.invalidate(&used_token).await;
             }
             if !response.status().is_success() {
-                return Err(format!(
+                let message = format!(
                     "{} No inference request was retried.",
                     response_error("inference", response.status(), response.headers())
-                ));
+                );
+                return Err(inference_error(response, message, cancel).await);
             }
-            read_completion(response, entry.protocol, model, cancel, deltas).await
+            read_completion(response, entry.protocol, model, cancel, deltas)
+                .await
+                .map_err(Into::into)
         })
     }
 }
@@ -1103,6 +1226,121 @@ mod tests {
         assert_eq!(split.finish().unwrap().text, "ok");
     }
     #[test]
+    fn catalog_separates_input_output_and_combined_context_limits() {
+        for (limits, context, input, output) in [
+            (
+                json!({"max_prompt_tokens":8192,"max_output_tokens":8192}),
+                8192,
+                8192,
+                8192,
+            ),
+            (
+                json!({"max_prompt_tokens":100_000,"max_output_tokens":4096}),
+                100_000,
+                100_000,
+                4096,
+            ),
+            (
+                json!({"max_context_window_tokens":100_000,"max_output_tokens":4096}),
+                100_000,
+                95_904,
+                4096,
+            ),
+            (
+                json!({"max_context_window_tokens":100_000,"max_prompt_tokens":90_000,"max_output_tokens":4096}),
+                100_000,
+                90_000,
+                4096,
+            ),
+            (
+                json!({"max_context_window_tokens":100_000,"max_prompt_tokens":100_000,"max_output_tokens":4096}),
+                100_000,
+                95_904,
+                4096,
+            ),
+            (
+                json!({"max_context_window_tokens":1024,"max_output_tokens":8192}),
+                1024,
+                768,
+                256,
+            ),
+        ] {
+            let entries = catalog_models(
+                &json!({"data":[{"id":"fixture","model_picker_enabled":true,"capabilities":{"type":"chat","supports":{"tool_calls":true},"limits":limits}}]}),
+            );
+            assert_eq!(entries.len(), 1);
+            assert_eq!(
+                (
+                    entries[0].model.context,
+                    entries[0].input,
+                    entries[0].output
+                ),
+                (context, input, output)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn http_context_errors_are_typed_bounded_and_do_not_expose_provider_bodies() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for (status, body, overflow) in [
+            (
+                400,
+                json!({"error":{"code":"context_length_exceeded","message":"SECRET prompt"}})
+                    .to_string(),
+                true,
+            ),
+            (
+                422,
+                json!({"error":{"type":"prompt_too_long","message":"SECRET prompt"}}).to_string(),
+                true,
+            ),
+            (
+                400,
+                json!({"error":{"code":"invalid_request_error","message":"context window SECRET"}})
+                    .to_string(),
+                false,
+            ),
+            (
+                401,
+                json!({"error":{"code":"context_length_exceeded","message":"SECRET"}}).to_string(),
+                false,
+            ),
+            (
+                413,
+                format!(
+                    "{{\"error\":{{\"code\":\"context_length_exceeded\",\"message\":\"{}\"}}}}",
+                    "SECRET".repeat(4000)
+                ),
+                false,
+            ),
+        ] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buffer = [0; 4096];
+                assert!(socket.read(&mut buffer).await.unwrap() > 0);
+                let response = format!("HTTP/1.1 {status} Error\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                let _ = socket.write_all(response.as_bytes()).await;
+            });
+            let response = reqwest::Client::builder()
+                .no_proxy()
+                .build()
+                .unwrap()
+                .get(format!("http://{address}"))
+                .send()
+                .await
+                .unwrap();
+            let error =
+                inference_error(response, "safe fallback".into(), CancellationToken::new()).await;
+            assert_eq!(matches!(error, InferenceError::ContextOverflow), overflow);
+            assert!(!error.to_string().contains("SECRET"));
+            server.await.unwrap();
+        }
+    }
+
+    #[test]
     fn models_accept_optional_streaming_metadata() {
         let value = json!({"data":[{"id":"chat","name":"Chat","policy":{"state":"enabled"},"capabilities":{"supports":{"tool_calls":true}}}]});
         assert_eq!(parse_models(&value).len(), 1);
@@ -1118,6 +1356,7 @@ mod tests {
             },
             protocol: Protocol::Responses,
             output: 8192,
+            input: 24_000,
             tools: true,
             vision: Some(true),
         };

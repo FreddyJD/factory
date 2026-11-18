@@ -53,6 +53,7 @@ async fn main() -> Result<(), String> {
                     model,
                     messages.clone(),
                     definitions.clone(),
+                    None,
                     if round == 0 { "user" } else { "agent" },
                     CancellationToken::new(),
                     tx,

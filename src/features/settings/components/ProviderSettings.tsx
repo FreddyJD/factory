@@ -8,6 +8,8 @@ interface Endpoint {
   modelId: string;
   context: number;
   hasKey: boolean;
+  output: number;
+  outputParameter: "provider_default" | "max_tokens" | "max_completion_tokens";
 }
 export function ProviderSettings({ onRefresh }: { onRefresh: () => void }) {
   const list = useResource<Endpoint[]>("provider-connections", () =>
@@ -20,6 +22,9 @@ export function ProviderSettings({ onRefresh }: { onRefresh: () => void }) {
   const [key, setKey] = useState("");
   const [clearKey, setClearKey] = useState(false);
   const [context, setContext] = useState(32000);
+  const [output, setOutput] = useState(4096);
+  const [outputParameter, setOutputParameter] =
+    useState<Endpoint["outputParameter"]>("provider_default");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -32,6 +37,8 @@ export function ProviderSettings({ onRefresh }: { onRefresh: () => void }) {
     setKey("");
     setClearKey(false);
     setContext(32000);
+    setOutput(4096);
+    setOutputParameter("provider_default");
   }
   async function action(operation: () => Promise<void>) {
     if (lock.current) return;
@@ -74,6 +81,8 @@ export function ProviderSettings({ onRefresh }: { onRefresh: () => void }) {
                   setBase(endpoint.baseUrl);
                   setModel(endpoint.modelId);
                   setContext(endpoint.context);
+                  setOutput(endpoint.output);
+                  setOutputParameter(endpoint.outputParameter);
                   setKey("");
                   setClearKey(false);
                 }}
@@ -127,6 +136,8 @@ export function ProviderSettings({ onRefresh }: { onRefresh: () => void }) {
                 apiKey: key || undefined,
                 clearKey,
                 context,
+                output,
+                outputParameter,
               });
               setMessage(
                 "Connection saved. Select this model when creating an issue.",
@@ -201,6 +212,42 @@ export function ProviderSettings({ onRefresh }: { onRefresh: () => void }) {
               onChange={(event) => setContext(Number(event.target.value))}
             />
           </label>
+          <label>
+            Output token reserve
+            <input
+              type="number"
+              min={1}
+              max={8192}
+              className="form-control"
+              value={output}
+              onChange={(event) => setOutput(Number(event.target.value))}
+            />
+          </label>
+          <label>
+            Output limit parameter
+            <select
+              className="form-control"
+              value={outputParameter}
+              onChange={(event) =>
+                setOutputParameter(
+                  event.target.value as Endpoint["outputParameter"],
+                )
+              }
+            >
+              <option value="provider_default">
+                Provider default (omit parameter)
+              </option>
+              <option value="max_tokens">max_tokens (legacy/compatible)</option>
+              <option value="max_completion_tokens">
+                max_completion_tokens (reasoning models)
+              </option>
+            </select>
+          </label>
+          <p className="muted">
+            The reserve budgets context. Select a supported parameter to enforce
+            it; provider default preserves existing connections but cannot
+            enforce the output cap.
+          </p>
           <p className="muted">
             Requires streaming Chat Completions with function/tool calls. HTTPS,
             or HTTP on localhost. Include the API prefix, such as /v1. Keys stay

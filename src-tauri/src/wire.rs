@@ -264,9 +264,9 @@ pub fn body(
     tools: &[Value],
     output: usize,
 ) -> Result<Value> {
-    match protocol {
-        Protocol::Chat => Ok(
-            json!({"model":model,"messages":chat_messages(messages,true),"tools":tools,"stream":true}),
+    let mut payload = match protocol {
+        Protocol::Chat => Ok::<Value, String>(
+            json!({"model":model,"messages":chat_messages(messages,true),"tools":tools,"max_tokens":output,"stream":true}),
         ),
         Protocol::Responses => {
             let mut input = Vec::new();
@@ -353,7 +353,12 @@ pub fn body(
                 json!({"model":model,"system":system,"messages":translated,"tools":tools,"max_tokens":output,"stream":true}),
             )
         }
+    }?;
+    if tools.is_empty() {
+        payload.as_object_mut().unwrap().remove("tools");
+        payload.as_object_mut().unwrap().remove("tool_choice");
     }
+    Ok(payload)
 }
 
 #[derive(Default)]

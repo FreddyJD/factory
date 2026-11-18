@@ -1,4 +1,5 @@
 pub mod connections;
+pub mod context;
 pub mod github;
 pub mod images;
 pub mod issues;

@@ -1,5 +1,5 @@
 use crate::{
-    provider::{Completion, Copilot, Inference, Model, StreamDecoder},
+    provider::{Copilot, Inference, Model, StreamDecoder},
     repository,
     workspace::Result,
 };
@@ -23,6 +23,29 @@ pub struct Endpoint {
     pub model_id: String,
     pub context: usize,
     pub has_key: bool,
+    #[serde(default = "default_output")]
+    pub output: usize,
+    #[serde(default)]
+    pub output_parameter: OutputParameter,
+}
+fn default_output() -> usize {
+    4096
+}
+#[derive(Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputParameter {
+    #[default]
+    ProviderDefault,
+    MaxTokens,
+    MaxCompletionTokens,
+}
+impl Endpoint {
+    fn limits(&self) -> crate::context::Limits {
+        let mut limits = crate::context::Limits::window(self.context);
+        limits.output = self.output.clamp(1, limits.output);
+        limits.input = self.context.saturating_sub(limits.output);
+        limits
+    }
 }
 pub struct Providers {
     root: PathBuf,
@@ -108,6 +131,12 @@ impl Providers {
         if supplied.is_some() && args["clearKey"] == true {
             return Err("Supply a new API key or remove the saved key, not both".into());
         }
+        let output_parameter = match args.get("outputParameter") {
+            Some(value) => {
+                serde_json::from_value(value.clone()).map_err(|_| "Invalid output parameter")?
+            }
+            None => old.map_or(OutputParameter::default(), |e| e.output_parameter),
+        };
         let mut has_key = old.is_some_and(|e| e.has_key);
         if let Some(key) = supplied {
             self.key(&id)?
@@ -132,6 +161,11 @@ impl Providers {
                 .unwrap_or(32_000)
                 .clamp(16_384, 1_000_000) as usize,
             has_key,
+            output: args["output"]
+                .as_u64()
+                .map(|n| n.clamp(1, 8192) as usize)
+                .unwrap_or_else(|| old.map_or(default_output(), |e| e.output)),
+            output_parameter,
         };
         endpoints.retain(|e| e.id != id);
         endpoints.push(endpoint);
@@ -275,20 +309,31 @@ pub fn base_url(value: &str) -> Result<String> {
     Ok(url.as_str().trim_end_matches('/').into())
 }
 impl Inference for Providers {
+    fn limits<'a>(&'a self, model: &'a Model) -> BoxFuture<'a, Result<crate::context::Limits>> {
+        Box::pin(async move {
+            if let Some((id, _)) = split(&model.id) {
+                self.model(&model.id).await?;
+                Ok(self.endpoint(id)?.limits())
+            } else {
+                self.copilot.limits(model).await
+            }
+        })
+    }
     fn complete<'a>(
         &'a self,
         model: &'a str,
         messages: Vec<Value>,
         tools: Vec<Value>,
+        output: Option<usize>,
         initiator: &'a str,
         cancel: CancellationToken,
         deltas: mpsc::Sender<String>,
-    ) -> BoxFuture<'a, Result<Completion>> {
+    ) -> BoxFuture<'a, crate::provider::InferenceResult> {
         Box::pin(async move {
             let Some((id, model)) = split(model) else {
                 return self
                     .copilot
-                    .complete(model, messages, tools, initiator, cancel, deltas)
+                    .complete(model, messages, tools, output, initiator, cancel, deltas)
                     .await;
             };
             let endpoint = self.endpoint(id)?;
@@ -296,7 +341,25 @@ impl Inference for Providers {
                 return Err("Provider model changed; execution stopped".into());
             }
             let base = base_url(&endpoint.base_url)?;
-            let mut request=self.client.post(format!("{base}/chat/completions")).json(&json!({"model":model,"messages":crate::wire::chat_messages(&messages,false),"tools":tools,"tool_choice":"auto","stream":true})).timeout(Duration::from_secs(300));
+            let output = output
+                .unwrap_or(endpoint.limits().output)
+                .clamp(1, endpoint.limits().output);
+            let mut payload = json!({"model":model,"messages":crate::wire::chat_messages(&messages,false),"stream":true});
+            if !tools.is_empty() {
+                payload["tools"] = json!(tools);
+            }
+            match endpoint.output_parameter {
+                OutputParameter::ProviderDefault => (),
+                OutputParameter::MaxTokens => payload["max_tokens"] = json!(output),
+                OutputParameter::MaxCompletionTokens => {
+                    payload["max_completion_tokens"] = json!(output)
+                }
+            }
+            let mut request = self
+                .client
+                .post(format!("{base}/chat/completions"))
+                .json(&payload)
+                .timeout(Duration::from_secs(300));
             if endpoint.has_key {
                 request = request.bearer_auth(
                     self.key(id)?
@@ -306,10 +369,11 @@ impl Inference for Providers {
             }
             let response = tokio::select! {biased;_ = cancel.cancelled()=>return Err("Cancelled".into()),response=request.send()=>response.map_err(|_|"Inference endpoint could not connect")?};
             if !response.status().is_success() {
-                return Err(format!(
+                let message = format!(
                     "Inference endpoint HTTP {}. No request was retried.",
                     response.status()
-                ));
+                );
+                return Err(crate::provider::inference_error(response, message, cancel).await);
             }
             let mut stream = response.bytes_stream();
             let mut decoder = StreamDecoder::default();
@@ -319,7 +383,7 @@ impl Inference for Providers {
                     break;
                 }
             }
-            decoder.finish()
+            decoder.finish().map_err(Into::into)
         })
     }
 }
@@ -355,65 +419,91 @@ mod tests {
     }
     #[tokio::test]
     async fn native_http_request_preserves_prefix_and_routes_model_without_github() {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut buffer = vec![0; 16384];
-            let mut bytes = Vec::new();
-            loop {
-                let count = socket.read(&mut buffer).await.unwrap();
-                assert!(count > 0);
-                bytes.extend_from_slice(&buffer[..count]);
-                if let Some(index) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
-                    let headers = String::from_utf8_lossy(&bytes[..index]);
-                    let length = headers
-                        .lines()
-                        .find_map(|l| {
-                            l.to_ascii_lowercase()
-                                .strip_prefix("content-length: ")
-                                .and_then(|n| n.parse::<usize>().ok())
-                        })
-                        .unwrap();
-                    if bytes.len() >= index + 4 + length {
-                        assert!(headers.starts_with("POST /gateway/v1/chat/completions "));
-                        assert!(!headers.to_lowercase().contains("authorization:"));
-                        let body: Value = serde_json::from_slice(&bytes[index + 4..]).unwrap();
-                        assert_eq!(body["model"], "provider/model");
-                        assert_eq!(body["stream"], true);
-                        break;
+        for (parameter, field) in [
+            ("provider_default", None),
+            ("max_tokens", Some("max_tokens")),
+            ("max_completion_tokens", Some("max_completion_tokens")),
+        ] {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buffer = vec![0; 16384];
+                let mut bytes = Vec::new();
+                loop {
+                    let count = socket.read(&mut buffer).await.unwrap();
+                    assert!(count > 0);
+                    bytes.extend_from_slice(&buffer[..count]);
+                    if let Some(index) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let headers = String::from_utf8_lossy(&bytes[..index]);
+                        let length = headers
+                            .lines()
+                            .find_map(|l| {
+                                l.to_ascii_lowercase()
+                                    .strip_prefix("content-length: ")
+                                    .and_then(|n| n.parse::<usize>().ok())
+                            })
+                            .unwrap();
+                        if bytes.len() >= index + 4 + length {
+                            assert!(headers.starts_with("POST /gateway/v1/chat/completions "));
+                            assert!(!headers.to_lowercase().contains("authorization:"));
+                            let body: Value = serde_json::from_slice(&bytes[index + 4..]).unwrap();
+                            assert_eq!(body["model"], "provider/model");
+                            assert_eq!(body["stream"], true);
+                            assert!(body.get("tools").is_none());
+                            if let Some(field) = field {
+                                assert_eq!(body[field], 512);
+                            } else {
+                                assert!(body.get("max_tokens").is_none());
+                                assert!(body.get("max_completion_tokens").is_none());
+                            }
+                            break;
+                        }
                     }
                 }
-            }
-            let body="data: {\"choices\":[{\"delta\":{\"content\":\"native endpoint\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
-            socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
-        });
-        let root = std::env::temp_dir().join(format!("native-provider-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir(&root).unwrap();
-        let providers = Providers::new(&root, Arc::new(Copilot::new(&root)));
-        let endpoints=providers.save(&json!({"baseUrl":format!("http://{address}/gateway/v1/"),"modelId":"provider/model"})).await.unwrap();
-        let selection = format!(
-            "endpoint:{}/provider/model",
-            endpoints[0]["id"].as_str().unwrap()
-        );
-        let (tx, mut rx) = mpsc::channel(10);
-        let result = providers
-            .complete(
-                &selection,
-                vec![json!({"role":"user","content":"test"})],
-                vec![],
-                "user",
-                CancellationToken::new(),
-                tx,
-            )
-            .await
-            .unwrap();
-        assert_eq!(result.text, "native endpoint");
-        assert_eq!(rx.recv().await.unwrap(), "native endpoint");
-        server.await.unwrap();
-        std::fs::remove_dir_all(root).unwrap();
+                let body="data: {\"choices\":[{\"delta\":{\"content\":\"native endpoint\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
+                socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
+            });
+            let root =
+                std::env::temp_dir().join(format!("native-provider-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir(&root).unwrap();
+            let providers = Providers::new(&root, Arc::new(Copilot::new(&root)));
+            let endpoints=providers.save(&json!({"baseUrl":format!("http://{address}/gateway/v1/"),"modelId":"provider/model","output":1024,"outputParameter":parameter})).await.unwrap();
+            let selection = format!(
+                "endpoint:{}/provider/model",
+                endpoints[0]["id"].as_str().unwrap()
+            );
+            let (tx, mut rx) = mpsc::channel(10);
+            let result = providers
+                .complete(
+                    &selection,
+                    vec![json!({"role":"user","content":"test"})],
+                    vec![],
+                    Some(512),
+                    "user",
+                    CancellationToken::new(),
+                    tx,
+                )
+                .await
+                .unwrap();
+            assert_eq!(result.text, "native endpoint");
+            assert_eq!(rx.recv().await.unwrap(), "native endpoint");
+            server.await.unwrap();
+            std::fs::remove_dir_all(root).unwrap();
+        }
     }
+    #[test]
+    fn retained_connections_load_with_compatible_output_defaults() {
+        let endpoint: Endpoint = serde_json::from_value(json!({"id":"old","name":"Old","baseUrl":"http://localhost/v1","modelId":"test","context":128000,"hasKey":false})).unwrap();
+        assert!(matches!(
+            endpoint.output_parameter,
+            OutputParameter::ProviderDefault
+        ));
+        assert_eq!(endpoint.limits().output, 4096);
+        assert_eq!(endpoint.limits().input, 123904);
+    }
+
     #[test]
     fn validates_endpoint_boundaries() {
         assert_eq!(
