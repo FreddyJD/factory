@@ -21,10 +21,11 @@ impl provider::Inference for Scripted {
         _: &'a str,
         messages: Vec<Value>,
         _: Vec<Value>,
+        _: Option<usize>,
         _: &'a str,
         _: CancellationToken,
         _: mpsc::Sender<String>,
-    ) -> futures_util::future::BoxFuture<'a, Result<provider::Completion, String>> {
+    ) -> futures_util::future::BoxFuture<'a, provider::InferenceResult> {
         Box::pin(async move {
             if self.0.fetch_add(1, Ordering::SeqCst) == 0 {
                 Ok(provider::Completion {

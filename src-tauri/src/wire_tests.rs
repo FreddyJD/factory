@@ -66,6 +66,25 @@ fn tools() -> Vec<Value> {
 }
 
 #[test]
+fn summary_requests_omit_tools_and_use_the_explicit_output_cap_on_every_wire() {
+    let messages = vec![
+        json!({"role":"system","content":"Checkpoint policy"}),
+        json!({"role":"user","content":"Summarize source"}),
+    ];
+    for (protocol, field) in [
+        (Protocol::Chat, "max_tokens"),
+        (Protocol::Responses, "max_output_tokens"),
+        (Protocol::Messages, "max_tokens"),
+        (Protocol::MessagesV1, "max_tokens"),
+    ] {
+        let request = body(protocol, "fixture", &messages, &[], 512).unwrap();
+        assert_eq!(request[field], 512);
+        assert!(request.get("tools").is_none());
+        assert!(request.get("tool_choice").is_none());
+    }
+}
+
+#[test]
 fn user_images_translate_to_every_protocol_and_survive_tool_continuations() {
     let url = "data:image/png;base64,aW1hZ2U=";
     let messages = vec![
@@ -167,7 +186,7 @@ fn long_running_context_preserves_images_and_native_tool_continuations() {
             );
         }
         let original = history.clone();
-        let projected = crate::runtime::context(&history, "Policy", 128_000, &tools()).unwrap();
+        let projected = crate::context::project(&history, "Policy", 128_000, &tools()).unwrap();
         assert_eq!(history, original);
         assert_eq!(projected.last(), history.last());
         let assistants: Vec<_> = projected
