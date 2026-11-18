@@ -1,12 +1,36 @@
+@font-face {
+  font-family: "Inter Variable";
+  src: url("./assets/fonts/InterVariable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter Variable";
+  src: url("./assets/fonts/InterVariable-Italic.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
 :root {
+  --sidebar-width: 216px;
+  --titlebar-height: 56px;
   font-family:
-    -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    "Inter Variable",
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    system-ui,
+    sans-serif;
   color: #24292f;
   background: #fff;
   font-size: 14px;
+  line-height: 1.5;
+  font-optical-sizing: auto;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 * {
   box-sizing: border-box;
@@ -54,16 +78,21 @@ p {
 }
 h1 {
   font-size: 24px;
-  font-weight: 400;
-  line-height: 1.35;
+  font-weight: 500;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
 }
 h2 {
   font-size: 20px;
-  font-weight: 500;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.015em;
 }
 h3 {
   font-size: 16px;
   font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: -0.01em;
 }
 h4 {
   font-size: 12px;
@@ -79,6 +108,7 @@ kbd {
   font-family:
     ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   font-size: 12px;
+  letter-spacing: normal;
 }
 code {
   overflow-wrap: anywhere;
@@ -109,8 +139,7 @@ hr {
   padding: 0;
   text-align: left;
 }
-.label,
-.visibility-label {
+.label {
   display: inline-flex;
   align-items: center;
   font-size: 11px;
@@ -244,6 +273,8 @@ input[type="radio"] {
   background: #f6f8fa;
   border-bottom: 1px solid #d0d7de;
   font-size: 13px;
+  line-height: 20px;
+  letter-spacing: -0.005em;
 }
 .panel-heading > a,
 .panel-heading > button:last-child,
@@ -349,6 +380,8 @@ input[type="radio"] {
   padding: 9px 16px;
   vertical-align: middle;
   font-size: 13px;
+  line-height: 20px;
+  letter-spacing: -0.005em;
 }
 .table tr:first-child td {
   border-top: 0;
@@ -357,39 +390,26 @@ input[type="radio"] {
   background: #f6f8fa;
 }
 .application {
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  grid-template-rows: var(--titlebar-height) minmax(0, 1fr);
   min-height: 100dvh;
 }
 .app-sidebar {
-  width: 224px;
-  flex-shrink: 0;
-  background: #f6f8fa;
-  border-right: 1px solid #d0d7de;
+  grid-column: 1;
+  grid-row: 2;
+  background: #fff;
+  border-right: 1px solid #eaecef;
   display: flex;
   flex-direction: column;
-  position: fixed;
-  inset: 0 auto 0 0;
+  position: sticky;
+  top: var(--titlebar-height);
+  height: calc(100dvh - var(--titlebar-height));
+  min-width: 0;
   z-index: 5;
 }
-.app-brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 65px;
-  padding: 0 20px;
-  font-size: 16px;
-  border-bottom: 1px solid #d8dee4;
-  letter-spacing: -0.3px;
-}
-.brand-symbol {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  color: #24292f;
-}
 .app-sidebar > nav {
-  padding: 18px 12px;
+  padding: 18px 10px;
   overflow: auto;
   flex: 1;
 }
@@ -404,15 +424,17 @@ input[type="radio"] {
   padding: 9px 11px;
   border-radius: 5px;
   font-size: 13px;
+  line-height: 20px;
+  letter-spacing: -0.005em;
   color: #424a53;
 }
 .sidebar-link.selected {
-  background: #e7edf3;
+  background: #f0f2f4;
   color: #24292f;
   font-weight: 600;
 }
 .sidebar-link:hover {
-  background: #eaeef2;
+  background: #f6f8fa;
 }
 .sidebar-link span {
   overflow: hidden;
@@ -423,7 +445,7 @@ input[type="radio"] {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 24px 11px 10px;
+  padding: 4px 11px 12px;
   color: #57606a;
   font-size: 12px;
   font-weight: 600;
@@ -456,25 +478,29 @@ input[type="radio"] {
   font-weight: 600;
 }
 .sidebar-bottom {
-  padding: 12px;
-  border-top: 1px solid #d8dee4;
+  padding: 12px 10px;
 }
 .app-content {
-  margin-left: 224px;
+  grid-column: 2;
+  grid-row: 2;
   min-width: 0;
-  width: calc(100% - 224px);
   display: flex;
   flex-direction: column;
 }
 .global-header {
-  height: 65px;
+  grid-column: 1 / -1;
+  grid-row: 1;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  height: var(--titlebar-height);
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  padding: 0 32px;
-  border-bottom: 1px solid #d8dee4;
+  padding: 0 24px;
+  border-bottom: 1px solid #eaecef;
   background: #fff;
 }
 .global-breadcrumb {
@@ -483,6 +509,10 @@ input[type="radio"] {
   gap: 10px;
   font-weight: 600;
   font-size: 13px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .global-actions {
   display: flex;
@@ -491,9 +521,9 @@ input[type="radio"] {
   font-size: 11px;
 }
 .repository-header {
-  background: #f6f8fa;
-  border-bottom: 1px solid #d0d7de;
-  padding: 26px 32px 0;
+  background: #fff;
+  border-bottom: 1px solid #eaecef;
+  padding: 24px 32px 0;
 }
 .repository-title {
   display: flex;
@@ -507,9 +537,6 @@ input[type="radio"] {
   color: #0969da;
   margin: 0;
   font-weight: 500;
-}
-.visibility-label {
-  margin-left: 2px;
 }
 .repo-tabs {
   display: flex;
@@ -526,6 +553,8 @@ input[type="radio"] {
   background: none;
   padding: 12px 6px 14px;
   font-size: 13px;
+  line-height: 20px;
+  letter-spacing: -0.005em;
   white-space: nowrap;
 }
 .repo-tabs button[aria-current="page"] {
@@ -551,10 +580,27 @@ input[type="radio"] {
   min-height: 34px;
   margin-bottom: 21px;
 }
+.code-actionbar {
+  justify-content: flex-start;
+  gap: 8px;
+}
+.code-actionbar > .checkout-controls {
+  flex: 1;
+}
+.code-actionbar > .search-box {
+  width: clamp(120px, 18vw, 220px);
+  min-height: 34px;
+}
+.code-actionbar > .search-box input {
+  width: 100%;
+}
+.code-actionbar .live-label {
+  display: none;
+}
 .checkout-controls {
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 16px;
   min-width: 0;
 }
 .checkout-select {
@@ -568,13 +614,16 @@ input[type="radio"] {
   border-radius: 4px;
   background: linear-gradient(#fff, #f3f4f6);
   padding-left: 11px;
-  max-width: 340px;
+  min-width: 0;
+  max-width: 260px;
+  min-height: 34px;
 }
 .checkout-select select {
   background: transparent;
   box-shadow: none;
   border: 0;
-  max-width: 300px;
+  min-width: 0;
+  max-width: 220px;
   padding: 6px 22px 6px 0;
   font-size: 12px;
   font-weight: 600;
@@ -584,6 +633,7 @@ input[type="radio"] {
   align-items: center;
   gap: 6px;
   font-size: 12px;
+  white-space: nowrap;
 }
 .live-label {
   font-size: 11px;
@@ -609,16 +659,9 @@ input[type="radio"] {
 .repository-files {
   min-width: 0;
 }
-.file-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 16px;
-  min-height: 32px;
-}
 .breadcrumbs {
   font-size: 14px;
-  flex: 1;
+  margin-bottom: 16px;
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -702,7 +745,7 @@ input[type="radio"] {
 }
 .file-date {
   text-align: right;
-  font-size: 11px !important;
+  font-size: 12px !important;
   white-space: nowrap;
 }
 .file-table td:first-child {
@@ -867,6 +910,28 @@ input[type="radio"] {
 }
 .settings-page > .section-toolbar {
   margin-bottom: 25px;
+}
+.settings-tabs {
+  display: flex;
+  gap: 20px;
+  border-bottom: 1px solid #d8dee4;
+  margin-bottom: 24px;
+}
+.settings-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  padding: 0 2px 12px;
+  font-size: 13px;
+  color: #57606a;
+}
+.settings-tabs button[aria-current="page"] {
+  color: #24292f;
+  border-bottom-color: #fd8c73;
+  font-weight: 600;
 }
 .settings-page label {
   max-width: 650px;
@@ -1218,6 +1283,9 @@ input[type="radio"] {
   border: 0;
 }
 @media (max-width: 1100px) {
+  :root {
+    --sidebar-width: 200px;
+  }
   .code-layout {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -1227,12 +1295,8 @@ input[type="radio"] {
   .thread-layout {
     grid-template-columns: minmax(0, 1fr) 180px;
   }
-  .app-sidebar {
-    width: 200px;
-  }
-  .app-content {
-    margin-left: 200px;
-    width: calc(100% - 200px);
+  .code-actionbar .branches-count {
+    display: none;
   }
   .repository-content {
     padding: 22px;
@@ -1249,20 +1313,20 @@ input[type="radio"] {
   }
 }
 @media (max-width: 720px) {
+  :root {
+    --titlebar-height: 52px;
+  }
   .application {
     display: block;
   }
   .app-sidebar {
     position: relative;
     width: 100%;
+    height: auto;
+    top: auto;
     border-right: 0;
     border-bottom: 1px solid #d0d7de;
     display: block;
-  }
-  .app-brand {
-    height: 48px;
-    padding: 0 16px;
-    font-size: 14px;
   }
   .app-sidebar > nav {
     display: flex;
@@ -1270,6 +1334,7 @@ input[type="radio"] {
     padding: 8px;
     gap: 5px;
     overflow: auto;
+    padding-right: 48px;
   }
   .app-sidebar > nav > .sidebar-link {
     width: auto;
@@ -1294,7 +1359,7 @@ input[type="radio"] {
   }
   .sidebar-bottom {
     position: absolute;
-    top: 6px;
+    top: 8px;
     right: 8px;
     padding: 0;
     border: 0;
@@ -1303,13 +1368,17 @@ input[type="radio"] {
     font-size: 0;
     gap: 0;
   }
+  .sidebar-bottom .sidebar-link svg {
+    width: 16px;
+    height: 20px;
+  }
   .app-content {
     margin: 0;
     width: 100%;
   }
   .global-header {
-    height: 49px;
     padding: 0 16px;
+    gap: 12px;
   }
   .repository-header {
     padding: 18px 16px 0;
@@ -1334,22 +1403,13 @@ input[type="radio"] {
     gap: 10px;
   }
   .checkout-select {
-    max-width: 230px;
+    max-width: 100%;
   }
   .checkout-select select {
-    max-width: 200px;
+    max-width: 100%;
   }
   .branches-count {
     display: none;
-  }
-  .file-toolbar {
-    flex-wrap: wrap;
-  }
-  .breadcrumbs {
-    flex-basis: 100%;
-  }
-  .search-box {
-    flex: 1;
   }
   .search-box input {
     width: 100%;
@@ -1412,7 +1472,7 @@ input[type="radio"] {
   align-items: center;
   align-self: stretch;
   flex-shrink: 0;
-  margin-right: -32px;
+  margin-right: -24px;
   gap: 0;
   user-select: none;
 }
@@ -1478,11 +1538,8 @@ input[type="radio"] {
   background: #ff5f57;
   color: #0009;
 }
-body:has(.mac-controls) .app-brand {
-  padding-top: 18px;
-  height: 65px;
-  align-items: flex-end;
-  padding-bottom: 8px;
+body:has(.mac-controls) .global-header {
+  padding-left: 96px;
 }
 .provider-row {
   display: flex;
@@ -1539,23 +1596,35 @@ body:has(.mac-controls) .app-brand {
     padding: 0 6px;
   }
   .mac-controls {
-    top: 12px;
-    left: auto;
-    right: 60px;
+    top: 19px;
+    left: 15px;
     margin: 0;
   }
   .mac-controls button {
     min-width: 12px;
     padding: 0;
   }
-  body:has(.mac-controls) .app-brand {
-    padding-top: 0;
-    align-items: center;
-    padding-bottom: 0;
-    height: 48px;
-  }
   .provider-row {
     flex-direction: column;
     align-items: flex-start;
+  }
+}
+@media (max-width: 480px) {
+  .code-actionbar {
+    flex-wrap: wrap;
+  }
+  .code-actionbar > .checkout-controls {
+    flex-basis: calc(100% - 108px);
+  }
+  .code-actionbar > .search-box {
+    order: 2;
+    width: auto;
+    flex: 1 1 calc(100% - 100px);
+  }
+  .code-actionbar > [aria-label="Refresh files"] {
+    order: 3;
+  }
+  .global-actions > .label {
+    display: none;
   }
 }
