@@ -69,7 +69,6 @@ export function RepositoryPage({
         <div className="repository-title">
           <Icon name="repo" size={20} />
           <h1>{name}</h1>
-          <span className="visibility-label">Local</span>
         </div>
         <nav className="repo-tabs" aria-label="Repository">
           {(
@@ -95,28 +94,33 @@ export function RepositoryPage({
         </nav>
       </div>
       <main className="repository-content">
-        <div className="repository-actionbar">
-          {tab === "code" || tab === "history" ? (
-            <CheckoutSelect
-              inventory={repository.inventory.value}
-              target={repository.target}
-              choose={repository.choose}
-            />
-          ) : (
-            <span className="muted">{project.name}</span>
-          )}
-          {tab !== "issues" && (
-            <button className="btn btn-success" onClick={newIssue}>
-              New issue
-            </button>
-          )}
-        </div>
+        {tab !== "code" && (
+          <div className="repository-actionbar">
+            {tab === "history" ? (
+              <CheckoutSelect
+                inventory={repository.inventory.value}
+                target={repository.target}
+                choose={repository.choose}
+              />
+            ) : (
+              <span className="muted">{project.name}</span>
+            )}
+            {tab !== "issues" && (
+              <button className="btn btn-success" onClick={newIssue}>
+                New issue
+              </button>
+            )}
+          </div>
+        )}
         {repository.inventory.error && (
           <div className="alert alert-danger">{repository.inventory.error}</div>
         )}
         {tab === "code" && (
           <CodeBrowser
             project={project}
+            inventory={repository.inventory.value}
+            choose={repository.choose}
+            onNewIssue={newIssue}
             target={repository.target}
             path={repository.path}
             setPath={repository.setPath}
