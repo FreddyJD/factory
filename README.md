@@ -60,7 +60,7 @@ Create an issue with just its description; the agent chooses a concise title dur
 
 At issue creation, optionally authorize validation, commit, push of only the assigned branch, and one draft PR. Otherwise prepare and confirm a draft PR manually from the completed issue. A validation command is required and must succeed without modifying the candidate. Publication uses a frozen candidate tree including new files, never force-pushes/tags/submodules, and records uncertain outcomes rather than retrying. The current starting commit must match the GitHub default branch; signed-commit policies require manual publication. Git push credentials and the GitHub CLI account are separate and must both have access. Live external publication/review has not been exercised by automated tests.
 
-MCP in the sidebar persists trusted project server configuration; new issues connect it in their worktree. Existing idle issues can attach a saved server explicitly. Configuration including supplied environment values is local plaintext under user-private app data; do not put secrets in project source.
+MCP in Settings persists trusted project server configuration; new issues connect it in their worktree. Existing idle issues can attach a saved server explicitly. Configuration including supplied environment values is local plaintext under user-private app data; do not put secrets in project source.
 
 ## Release A Version
 

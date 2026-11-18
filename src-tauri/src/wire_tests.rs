@@ -162,6 +162,93 @@ fn responses_tool_roundtrip_retains_final_encrypted_state_exactly_once() {
     }
 }
 #[test]
+fn responses_terminal_snapshot_finalizes_metadata_and_replays_final_state() {
+    for fragmented in [false, true] {
+        let mut events = response_events();
+        let output = &mut events.last_mut().unwrap()["response"]["output"];
+        output[0]["encrypted_content"] = json!("terminal-ciphertext");
+        output[0]["status"] = json!("completed");
+        output[1]["provider_metadata"] = json!({"complete": true});
+        let expected = output.clone();
+        let completion = stream(Protocol::Responses, events, fragmented).unwrap();
+        assert_eq!(completion.calls.len(), 1);
+        assert_eq!(completion.calls[0].arguments, function()["arguments"]);
+        assert_eq!(completion.state.as_ref().unwrap()["items"], expected);
+        let request = body(
+            Protocol::Responses,
+            "fixture",
+            &[assistant(&completion)],
+            &tools(),
+            8192,
+        )
+        .unwrap();
+        assert_eq!(request["input"], expected);
+    }
+}
+#[test]
+fn responses_completed_message_allows_metadata_but_not_payload_changes() {
+    let item = json!({"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"hello","annotations":[]}]});
+    let mut finalized = item.clone();
+    finalized["content"][0]["logprobs"] = json!([]);
+    let events = vec![
+        json!({"type":"response.output_item.done","output_index":0,"item":item}),
+        json!({"type":"response.completed","response":{"status":"completed","output":[finalized]}}),
+    ];
+    for fragmented in [false, true] {
+        let completion = stream(Protocol::Responses, events.clone(), fragmented).unwrap();
+        assert_eq!(completion.text, "hello");
+        assert_eq!(completion.state.unwrap()["items"][0], finalized);
+        for changed in [
+            json!({"text": "hello changed"}),
+            json!({"text": "different"}),
+            json!({"role": "user"}),
+            json!({"content": [{"type": "refusal", "refusal": "no"}]}),
+        ] {
+            let mut invalid = events.clone();
+            let output = &mut invalid.last_mut().unwrap()["response"]["output"][0];
+            if let Some(text) = changed.get("text") {
+                output["content"][0]["text"] = text.clone();
+            } else {
+                output
+                    .as_object_mut()
+                    .unwrap()
+                    .extend(changed.as_object().unwrap().clone());
+            }
+            assert!(stream(Protocol::Responses, invalid, fragmented).is_err());
+        }
+    }
+}
+#[test]
+fn responses_completed_tool_still_rejects_identity_and_argument_changes() {
+    for (key, changed) in [
+        ("id", "fc_2"),
+        ("type", "reasoning"),
+        ("call_id", "call_2"),
+        ("name", "write"),
+        ("arguments", "{\"filePath\":\"different\"}"),
+    ] {
+        for fragmented in [false, true] {
+            let mut events = response_events();
+            events.last_mut().unwrap()["response"]["output"][1][key] = json!(changed);
+            assert!(
+                stream(Protocol::Responses, events, fragmented).is_err(),
+                "{key}"
+            );
+        }
+    }
+    for arguments in [json!(""), Value::Null] {
+        let mut item = function();
+        item["arguments"] = arguments;
+        let events = vec![
+            json!({"type":"response.output_item.done","output_index":0,"item":item}),
+            json!({"type":"response.completed","response":{"status":"completed","output":[function()]}}),
+        ];
+        for fragmented in [false, true] {
+            assert!(stream(Protocol::Responses, events.clone(), fragmented).is_err());
+        }
+    }
+}
+#[test]
 fn messages_tool_roundtrip_preserves_thinking_signatures_order_and_tool_results() {
     for fragmented in [false, true] {
         let completion = stream(Protocol::MessagesV1, messages_events(), fragmented).unwrap();

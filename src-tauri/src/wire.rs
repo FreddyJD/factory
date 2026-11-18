@@ -700,8 +700,23 @@ impl Decoder {
         {
             return Err("Responses item identity changed".into());
         }
-        if previous.closed && previous.value != *final_item {
-            return Err("Responses completed item changed in terminal snapshot".into());
+        // The terminal snapshot owns metadata such as encrypted reasoning and logprobs.
+        // Validate the completed payload, not byte-for-byte equality of the whole item.
+        if previous.closed && previous.value["type"] == "message" {
+            let before = previous.value["content"]
+                .as_array()
+                .ok_or("Missing Responses message content")?;
+            let after = final_item["content"]
+                .as_array()
+                .ok_or("Missing Responses message content")?;
+            if previous.value["role"] != final_item["role"]
+                || before.len() != after.len()
+                || before.iter().zip(after).any(|(a, b)| {
+                    a["type"] != b["type"] || a["text"] != b["text"] || a["refusal"] != b["refusal"]
+                })
+            {
+                return Err("Responses completed message changed in terminal snapshot".into());
+            }
         }
         if previous.value["type"] == "function_call" {
             if previous.value["call_id"] != final_item["call_id"]
@@ -709,8 +724,9 @@ impl Decoder {
             {
                 return Err("Responses tool identity changed".into());
             }
-            if (previous.fragments
-                && previous.arguments != final_item["arguments"].as_str().unwrap_or(""))
+            if (previous.closed && previous.value["arguments"] != final_item["arguments"])
+                || (previous.fragments
+                    && previous.arguments != final_item["arguments"].as_str().unwrap_or(""))
                 || (!previous.fragments
                     && previous.value["arguments"].as_str().is_some_and(|s| {
                         !s.is_empty() && Some(s) != final_item["arguments"].as_str()

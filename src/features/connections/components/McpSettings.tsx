@@ -58,9 +58,9 @@ export function McpSettings({
     }
   }
   return (
-    <section className="settings-page">
+    <section aria-label="MCP settings">
       <div className="section-toolbar">
-        <h1>MCP</h1>
+        <h2>MCP</h2>
         {project && <span className="muted">{project.name}</span>}
       </div>
       <p>

@@ -15,26 +15,13 @@ export function ProjectSidebar({
   section: string;
   tab: Tab;
   onProject: (id: string) => void;
-  onSection: (s: "repository" | "mcp" | "settings") => void;
+  onSection: (s: "repository" | "settings") => void;
   onTab: (t: Tab) => void;
   onOpen: () => void;
 }) {
   return (
     <aside className="app-sidebar">
-      <div className="app-brand" data-tauri-drag-region>
-        <span className="brand-symbol">
-          <Icon name="repo" size={21} />
-        </span>
-        <strong>factory</strong>
-      </div>
       <nav aria-label="Application">
-        <button
-          className={`sidebar-link ${section === "mcp" ? "selected" : ""}`}
-          onClick={() => onSection("mcp")}
-        >
-          <Icon name="mcp" />
-          MCP
-        </button>
         <div className="sidebar-heading">
           <span>Projects</span>
           <button

@@ -21,6 +21,7 @@ export function IssueTranscript({ lines }: { lines: TranscriptLine[] }) {
     let rows: { text: string; heading: boolean; kind: string }[] = [];
     let previousWidth = 0;
     const content = element.parentElement!;
+    const fontFamily = getComputedStyle(viewport).fontFamily;
     function draw() {
       frame = 0;
       const width = viewport!.clientWidth;
@@ -29,8 +30,7 @@ export function IssueTranscript({ lines }: { lines: TranscriptLine[] }) {
       if (previousWidth !== width || previousLines !== current.current) {
         rows = [];
         previousWidth = width;
-        ctx!.font =
-          '13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+        ctx!.font = `13px ${fontFamily}`;
         for (const line of current.current) {
           rows.push({
             text:
@@ -72,8 +72,8 @@ export function IssueTranscript({ lines }: { lines: TranscriptLine[] }) {
       for (let i = range.first; i < range.last; i++) {
         const row = rows[i];
         ctx!.font = row.heading
-          ? '600 11px -apple-system, "Segoe UI", sans-serif'
-          : '13px -apple-system, "Segoe UI", sans-serif';
+          ? `600 11px ${fontFamily}`
+          : `13px ${fontFamily}`;
         ctx!.fillStyle =
           row.kind === "error"
             ? "#a94442"
@@ -86,12 +86,19 @@ export function IssueTranscript({ lines }: { lines: TranscriptLine[] }) {
     const request = () => {
       if (!frame) frame = requestAnimationFrame(draw);
     };
+    const fontsLoaded = () => {
+      // Rewrap using the loaded font's metrics, not the temporary fallback.
+      previousWidth = 0;
+      request();
+    };
+    document.fonts.addEventListener("loadingdone", fontsLoaded);
     redraw.current = request;
     const observer = new ResizeObserver(request);
     observer.observe(viewport);
     viewport.addEventListener("scroll", request);
     request();
     return () => {
+      document.fonts.removeEventListener("loadingdone", fontsLoaded);
       observer.disconnect();
       viewport.removeEventListener("scroll", request);
       cancelAnimationFrame(frame);
