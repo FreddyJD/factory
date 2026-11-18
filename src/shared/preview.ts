@@ -218,7 +218,7 @@ export async function previewApi(
           outcome: "completed",
           localMerge: null,
         })),
-        github: false,
+        github: true,
       };
     case "local_preview":
       return {

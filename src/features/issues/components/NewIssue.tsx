@@ -10,11 +10,13 @@ import { useResource } from "../../../shared/hooks/useResource";
 import { ImageAttachments, useIssueImages } from "./ImageAttachments";
 export function NewIssue({
   project,
+  github: remote,
   onCreated,
   onCancel,
   onSettings,
 }: {
   project: Project;
+  github: boolean | undefined;
   onCreated: (task: Task) => void;
   onCancel: () => void;
   onSettings: () => void;
@@ -25,6 +27,7 @@ export function NewIssue({
     localStorage.getItem("factory-model") ?? "",
   );
   const [autoPr, setAutoPr] = useState(false);
+  const publish = remote === true && autoPr;
   const [validation, setValidation] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -47,7 +50,7 @@ export function NewIssue({
     attachments.images.length > 0 &&
     available.find((m) => m.id === selected)?.capabilities?.vision === false;
   const github = useResource<Record<string, unknown>>(
-    autoPr ? `github:${project.id}` : null,
+    publish ? `github:${project.id}` : null,
     () => api("github_status", { projectId: project.id }),
   );
   async function submit(event: React.FormEvent) {
@@ -71,7 +74,7 @@ export function NewIssue({
         images: attachments.images,
         model: selected,
         nativeEdits: true,
-        autoPr,
+        autoPr: publish,
         validation,
         githubTarget: github.value ?? null,
       });
@@ -166,15 +169,17 @@ export function NewIssue({
               placeholder="npm test"
             />
           </label>
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={autoPr}
-              onChange={(e) => setAutoPr(e.target.checked)}
-            />
-            Automatically create a draft pull request after validation
-          </label>
-          {autoPr && (
+          {remote === true && (
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={autoPr}
+                onChange={(e) => setAutoPr(e.target.checked)}
+              />
+              Automatically create a draft pull request after validation
+            </label>
+          )}
+          {publish && (
             <div className="alert alert-warning">
               {github.error ??
                 (github.loading
@@ -197,7 +202,7 @@ export function NewIssue({
               attachments.reading ||
               imageUnsupported ||
               (!body.trim() && !attachments.images.length) ||
-              (autoPr &&
+              (publish &&
                 (!validation.trim() || !github.value || !!github.error))
             }
           >
