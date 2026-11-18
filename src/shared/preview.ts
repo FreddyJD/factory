@@ -157,7 +157,13 @@ export async function previewApi(
                 id: "tool1",
                 type: "tool",
                 tool: "read",
-                state: { status: "completed", title: "api/src/routes.rs" },
+                state: {
+                  status: "completed",
+                  title: "read",
+                  input: { filePath: "api/src/routes.rs", limit: 40 },
+                  output:
+                    "1: pub fn routes() -> Router {\n2:     Router::new()\n3: }",
+                },
               },
             ],
           },
@@ -170,7 +176,12 @@ export async function previewApi(
                 tool: "edit",
                 state: {
                   status: "completed",
-                  title: "api/src/routes.rs",
+                  title: "edit",
+                  input: {
+                    filePath: "api/src/routes.rs",
+                    oldString: "Router::new()",
+                    newString: 'Router::new().route("/health", get(health))',
+                  },
                   output: "Added GET /health with a 200 response.",
                 },
               },

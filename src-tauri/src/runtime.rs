@@ -113,6 +113,21 @@ impl Session {
             .events
             .send(json!({"taskId":task,"event":{"type":kind,"properties":properties}}));
     }
+    fn file_activity(&self, task: &Task, call_id: &str, path: &Path, access: &str) {
+        if let Some(checkout) = task
+            .checkouts
+            .iter()
+            .filter(|c| path.starts_with(&c.path))
+            .max_by_key(|c| c.path.components().count())
+        {
+            let relative = path.strip_prefix(&checkout.path).unwrap();
+            self.emit(&task.id, "file-activity", json!({
+                "callId": call_id, "checkoutPath": checkout.path,
+                "path": relative.to_string_lossy().replace('\\', "/"), "access": access,
+                "observedAt": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64
+            }));
+        }
+    }
     async fn persist(&self) -> Result<()> {
         let task = self.task.lock().await.clone();
         save(
@@ -981,16 +996,24 @@ async fn execute(
         "read" | "glob" | "grep" | "skill" => {
             let args = args.clone();
             let name = call.name.clone();
-            tokio::task::spawn_blocking(move || tools::inspect(&task, &name, &args, &cancel))
-                .await
-                .map_err(|e| e.to_string())?
+            let session = session.clone();
+            let call_id = call.id.clone();
+            tokio::task::spawn_blocking(move || {
+                tools::inspect(&task, &name, &args, &cancel, &|path, access| {
+                    session.file_activity(&task, &call_id, path, access)
+                })
+            })
+            .await
+            .map_err(|e| e.to_string())?
         }
         "write" | "edit" | "apply_patch" => {
             let changes = tools::plan(&task, &call.name, args)?;
             if cancel.is_cancelled() {
                 return Err("Cancelled".into());
             }
-            tools::apply(&task, &changes)
+            tools::apply(&task, &changes, &|path, access| {
+                session.file_activity(&task, &call.id, path, access)
+            })
         }
         "bash" => tools::shell(&task, args, cancel).await,
         "webfetch" => tools::fetch(args, cancel).await,
@@ -1097,7 +1120,9 @@ async fn explore(
                     .map_err(|e| e.to_string())
                     .and_then(|schema| schema.validate(&args).map_err(|e| e.to_string()))
                 {
-                    Ok(()) => tools::inspect(&task, &call.name, &args, &cancel),
+                    Ok(()) => tools::inspect(&task, &call.name, &args, &cancel, &|path, access| {
+                        session.file_activity(&task, &call.id, path, access)
+                    }),
                     Err(error) => Err(error),
                 }
             } else {
@@ -1268,11 +1293,38 @@ mod tests {
             json!([])
         );
         assert!(!data.join("interactions").join(&task.id).exists());
+        let mut activity = Vec::new();
         while let Ok(event) = events.try_recv() {
             assert_ne!(event["event"]["type"], "permission");
             assert_ne!(event["event"]["properties"]["status"], "needs-you");
+            if event["event"]["type"] == "file-activity" {
+                activity.push(event);
+            }
         }
         assert!(!workspace.path.join("native.txt").exists());
+        assert_eq!(activity.len(), 3);
+        assert_eq!(activity[0]["event"]["properties"]["path"], "native.txt");
+        assert_eq!(activity[1]["event"]["properties"]["path"], "native.txt");
+        assert_eq!(activity[2]["event"]["properties"]["path"], "patched.txt");
+        assert_eq!(activity[0]["event"]["properties"]["access"], "write");
+        assert_eq!(
+            activity[0]["event"]["properties"]["checkoutPath"],
+            json!(task.checkouts[0].path)
+        );
+        let snapshot = factory.snapshot(&task.id).await.unwrap();
+        let tool = snapshot["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|m| m["parts"].as_array().unwrap())
+            .find(|p| p["type"] == "tool")
+            .unwrap();
+        assert_eq!(tool["state"]["input"]["content"], "native rust");
+        assert_eq!(tool["state"]["status"], "completed");
+        assert!(tool["state"]["output"]
+            .as_str()
+            .unwrap()
+            .contains("Applied 1"));
         drop(session);
         factory.shutdown().await;
         workspace::git(
