@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ProviderSettings } from "./ProviderSettings";
+import { GitHubRepositorySettings } from "./GitHubRepositorySettings";
 import { version } from "../../../../package.json";
 import { api, type ProviderCatalog, type Task } from "../../../shared/api";
 import { useResource } from "../../../shared/hooks/useResource";
@@ -22,9 +23,6 @@ export function SettingsView({
   tasks: Task[];
 }) {
   const [page, setPage] = useState<"general" | "mcp">("general");
-  const [autoPr, setAutoPr] = useState(
-    () => localStorage.getItem("factory-auto-pr") !== "false",
-  );
   const [id, setId] = useState(clientId ?? "");
   const touched = useRef(false);
   useEffect(() => {
@@ -197,35 +195,7 @@ export function SettingsView({
             </div>
           </div>
           <ProviderSettings onRefresh={onRefresh} />
-          <div className="panel">
-            <div className="panel-heading">GitHub repositories</div>
-            <div className="panel-body">
-              <p>
-                Pull requests use your installed GitHub CLI account. Git push
-                uses your configured Git credentials. These are separate from
-                Copilot.
-              </p>
-              <code>gh auth login</code>
-              <label className="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={autoPr}
-                  onChange={(event) => {
-                    const checked = event.target.checked;
-                    localStorage.setItem("factory-auto-pr", String(checked));
-                    setAutoPr(checked);
-                  }}
-                />
-                Automatically create a draft pull request
-              </label>
-              <p className="muted">
-                Applies to new issues in GitHub repositories. On successful
-                completion, commit and push the issue's assigned branch and open
-                a draft PR using your GitHub CLI account. No separate validation
-                command, force-push or merge.
-              </p>
-            </div>
-          </div>
+          <GitHubRepositorySettings project={project} onRefresh={onRefresh} />
           <div className="panel">
             <div className="panel-heading">Application</div>
             <div className="panel-body">

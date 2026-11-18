@@ -1,4 +1,5 @@
 pub mod connections;
+pub mod github;
 pub mod images;
 pub mod issues;
 pub mod local;
@@ -67,10 +68,10 @@ async fn factory_api(
                 return Err(error.into());
             }
             Ok(
-                json!({"engine":"native-rust","version":env!("CARGO_PKG_VERSION"),"githubClientId":factory.copilot.configured_client(),"providerNotice":provider::NOTICE,"tasks":factory.summaries().await?,"issues":issues::list(&factory.root)?,"projects":factory.repositories.list().await,"dataRoot":factory.root}),
+                json!({"engine":"native-rust","version":env!("CARGO_PKG_VERSION"),"githubClientId":factory.copilot.configured_client(),"providerNotice":provider::NOTICE,"tasks":factory.summaries().await?,"issues":issues::list(&factory.root)?,"projects":factory.repositories.list().await?,"dataRoot":factory.root}),
             )
         }
-        "projects" => Ok(json!(factory.repositories.list().await)),
+        "projects" => Ok(json!(factory.repositories.list().await?)),
         "project_open" => {
             let folder = rfd::AsyncFileDialog::new()
                 .set_title("Open repository or folder of repositories")
@@ -187,7 +188,14 @@ async fn factory_api(
         }
         "pr_preview" => {
             let task = workspace::load_task(&factory.root, text("taskId")?)?;
-            issues::candidate(&task).await
+            let _guard = factory.github.gate.read().await;
+            let _file = factory.github.file_gate(false).await?;
+            let issue = issues::load(&factory.root, &task.id)?;
+            let project = factory.repositories.project(&issue.project_id).await?;
+            let auth = factory
+                .github
+                .resolve(project.github_account_id.as_deref())?;
+            issues::candidate(&task, &auth).await
         }
         "pr_publish" => {
             factory
@@ -195,23 +203,44 @@ async fn factory_api(
                 .await
         }
         "github_status" => {
+            let _guard = factory.github.gate.read().await;
+            let _file = factory.github.file_gate(false).await?;
             let project = factory.repositories.project(text("projectId")?).await?;
-            issues::identity(&project.path).await
+            let auth = factory
+                .github
+                .resolve(project.github_account_id.as_deref())?;
+            issues::identity(&project.path, &auth).await
         }
         "pr_list" => {
+            let _guard = factory.github.gate.read().await;
+            let _file = factory.github.file_gate(false).await?;
             let project = factory.repositories.project(text("projectId")?).await?;
-            issues::pulls(&project.path).await
+            let auth = factory
+                .github
+                .resolve(project.github_account_id.as_deref())?;
+            issues::pulls(&project.path, &auth).await
         }
         "pr_view" => {
+            let _guard = factory.github.gate.read().await;
+            let _file = factory.github.file_gate(false).await?;
             let project = factory.repositories.project(text("projectId")?).await?;
+            let auth = factory
+                .github
+                .resolve(project.github_account_id.as_deref())?;
             issues::pull(
                 &project.path,
                 args["number"].as_u64().ok_or("Missing PR number")?,
+                &auth,
             )
             .await
         }
         "pr_approve" => {
+            let _guard = factory.github.gate.read().await;
+            let _file = factory.github.file_gate(false).await?;
             let project = factory.repositories.project(text("projectId")?).await?;
+            let auth = factory
+                .github
+                .resolve(project.github_account_id.as_deref())?;
             issues::approve(
                 &project.path,
                 args["number"].as_u64().ok_or("Missing PR number")?,
@@ -219,8 +248,58 @@ async fn factory_api(
                 text("body")?,
                 text("repository")?,
                 text("account")?,
+                &auth,
             )
             .await
+        }
+        "github_accounts" => {
+            let _guard = factory.github.gate.read().await;
+            let _file = factory.github.file_gate(false).await?;
+            Ok(json!(factory.github.list()?))
+        }
+        "github_account_save" => Ok(json!(factory.github.save(text("token")?.trim()).await?)),
+        "github_account_remove" => {
+            let _guard = factory.github.gate.write().await;
+            let _file = factory.github.file_gate(true).await?;
+            let id = text("id")?;
+            if factory
+                .repositories
+                .list()
+                .await?
+                .iter()
+                .any(|p| p.github_account_id.as_deref() == Some(id))
+            {
+                return Err(
+                    "Choose another account for repositories using this account before removing it"
+                        .into(),
+                );
+            }
+            Ok(json!(factory.github.remove(id)?))
+        }
+        "project_github_account" => {
+            let _guard = factory.github.gate.write().await;
+            let _file = factory.github.file_gate(true).await?;
+            let account = match args.get("accountId") {
+                Some(Value::Null) => None,
+                Some(Value::String(id)) => {
+                    if !factory.github.list()?.iter().any(|a| &a.id == id) {
+                        return Err("GitHub account is not connected".into());
+                    }
+                    Some(id.clone())
+                }
+                _ => return Err("accountId must be a connected account ID or null".into()),
+            };
+            Ok(json!(
+                factory
+                    .repositories
+                    .set_github_account(text("projectId")?, account)
+                    .await?
+            ))
+        }
+        "github_token_open" => {
+            open::that("https://github.com/settings/personal-access-tokens/new")
+                .map_err(|e| e.to_string())?;
+            Ok(json!(true))
         }
         "prepare_update" => {
             factory.shutdown().await;

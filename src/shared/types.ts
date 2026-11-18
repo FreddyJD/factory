@@ -3,6 +3,7 @@ export interface Project {
   id: string;
   name: string;
   path: string;
+  githubAccountId?: string | null;
 }
 export interface Checkout {
   id: string;
