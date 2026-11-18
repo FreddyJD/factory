@@ -20,16 +20,25 @@ pub async fn lease(path: &Path) -> Result<std::fs::File> {
     Ok(file)
 }
 async fn supported(path: &Path) -> Result<()> {
-    for operation in [
+    let operations = [
         "MERGE_HEAD",
         "CHERRY_PICK_HEAD",
         "REVERT_HEAD",
         "rebase-merge",
         "rebase-apply",
         "sequencer",
-    ] {
-        let location = repository::git(path, &["rev-parse", "--git-path", operation]).await?;
-        let location = Path::new(location.trim());
+    ];
+    let mut args = vec!["rev-parse", "--path-format=absolute"];
+    for operation in &operations {
+        args.extend(["--git-path", operation]);
+    }
+    // Resolve every operation marker in one process, including linked-worktree paths.
+    let locations = repository::git(path, &args).await?;
+    if locations.lines().count() != operations.len() {
+        return Err("Could not resolve Git operation paths".into());
+    }
+    for location in locations.lines() {
+        let location = Path::new(location);
         let location = if location.is_absolute() {
             location.to_path_buf()
         } else {
@@ -283,6 +292,51 @@ mod tests {
         .unwrap();
         fs::write(task.directory.join("new.txt"), "local content\n").unwrap();
         (root, project, task)
+    }
+    #[tokio::test]
+    async fn operation_markers_are_checked_in_source_and_linked_worktree() {
+        let (root, p, t) = fixture().await;
+        for path in [&p.path, &t.directory] {
+            for operation in [
+                "MERGE_HEAD",
+                "CHERRY_PICK_HEAD",
+                "REVERT_HEAD",
+                "rebase-merge",
+                "rebase-apply",
+                "sequencer",
+            ] {
+                let marker = repository::git(
+                    path,
+                    &[
+                        "rev-parse",
+                        "--path-format=absolute",
+                        "--git-path",
+                        operation,
+                    ],
+                )
+                .await
+                .unwrap();
+                let marker = Path::new(marker.trim());
+                fs::write(marker, "in progress").unwrap();
+                assert!(supported(path)
+                    .await
+                    .unwrap_err()
+                    .contains("Finish the existing"));
+                fs::remove_file(marker).unwrap();
+            }
+            supported(path).await.unwrap();
+        }
+        workspace::git(
+            &p.path,
+            &[
+                "worktree",
+                "remove",
+                "--force",
+                t.directory.to_str().unwrap(),
+            ],
+        )
+        .unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
     #[tokio::test]
     async fn merges_without_origin_or_gh_and_keeps_worktree() {

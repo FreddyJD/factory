@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type Task } from "../../../shared/api";
 import type { Project, Tab, Issue } from "../../../shared/types";
+import { useResource } from "../../../shared/hooks/useResource";
 import { Icon } from "../../../shared/components/Icon";
 import type { FileActivity } from "../hooks/useFileActivity";
 import { useRepository } from "../hooks/useRepository";
@@ -31,6 +32,11 @@ export function RepositoryPage({
   onSettings: () => void;
 }) {
   const repository = useRepository(project, tab === "code", activity);
+  const local = useResource<{ issues: Issue[]; github: boolean }>(
+    tab === "issues" || tab === "pulls" ? `local-reviews:${project.id}` : null,
+    () => api("local_reviews", { projectId: project.id }),
+    4000,
+  );
   const [selected, setSelected] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [createdTask, setCreatedTask] = useState<Task | null>(null);
@@ -92,6 +98,7 @@ export function RepositoryPage({
       setSelected((id) => (id === removal.id ? null : id));
       setCreatedTask((task) => (task?.id === removal.id ? null : task));
       setRemoval(null);
+      local.refresh();
       refresh();
       repository.inventory.refresh();
     } catch (error) {
@@ -214,6 +221,7 @@ export function RepositoryPage({
         {tab === "pulls" && (
           <PullRequestsView
             project={project}
+            local={local}
             onChange={() => {
               refresh();
               repository.inventory.refresh();
@@ -224,6 +232,7 @@ export function RepositoryPage({
           (creating ? (
             <NewIssue
               project={project}
+              github={local.value?.github}
               onCancel={() => setCreating(false)}
               onSettings={onSettings}
               onCreated={(task) => {
@@ -237,6 +246,7 @@ export function RepositoryPage({
             <IssueThread
               key={selectedTask.id}
               task={selectedTask}
+              github={local.value?.github}
               issue={issues.find((i) => i.taskId === selectedTask.id)}
               onBack={() => setSelected(null)}
               onRemove={requestRemoval}
