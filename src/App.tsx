@@ -55,7 +55,9 @@ export function App() {
     ? tasks.filter((t) => belongs(t, projects.project!))
     : [];
   return (
-    <div className="application">
+    <div
+      className={`application${desktop && /Mac/.test(navigator.platform) ? " macos" : ""}`}
+    >
       <header className="global-header" data-tauri-drag-region>
         <span className="global-breadcrumb">
           <Icon name={section === "settings" ? "settings" : "repo"} />

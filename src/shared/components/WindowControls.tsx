@@ -4,7 +4,8 @@ import { isTauri } from "@tauri-apps/api/core";
 export function WindowControls() {
   const [error, setError] = useState("");
   const mac = /Mac/.test(navigator.platform);
-  if (!isTauri()) return null;
+  // macOS owns the frame and traffic lights; only frameless platforms need these.
+  if (!isTauri() || mac) return null;
   function run(action: "minimize" | "toggleMaximize" | "close") {
     void getCurrentWindow()
       [action]()
@@ -12,7 +13,7 @@ export function WindowControls() {
   }
   return (
     <div
-      className={`window-controls ${mac ? "mac-controls" : "standard-controls"}`}
+      className="window-controls standard-controls"
       aria-label="Window controls"
     >
       <button
