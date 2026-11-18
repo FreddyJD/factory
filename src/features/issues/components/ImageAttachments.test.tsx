@@ -227,6 +227,7 @@ describe("issue images", () => {
     });
     expect(lines).toEqual([
       {
+        id: "user:image",
         kind: "user",
         text: "[Image: screen.png]",
         image: { name: "screen.png", dataUrl: "data:image/png;base64,test" },

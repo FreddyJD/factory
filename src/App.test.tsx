@@ -10,12 +10,20 @@ import {
 } from "@testing-library/react";
 import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 import { App } from "./App";
-const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
+const { invoke, listeners } = vi.hoisted(() => ({
+  invoke: vi.fn(),
+  listeners: new Set<(event: unknown) => void>(),
+}));
 vi.mock("@tauri-apps/api/core", () => ({
   isTauri: () => true,
   invoke: (...args: unknown[]) => invoke(...args),
 }));
-vi.mock("@tauri-apps/api/event", () => ({ listen: async () => () => {} }));
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: async (_name: string, callback: (event: unknown) => void) => {
+    listeners.add(callback);
+    return () => listeners.delete(callback);
+  },
+}));
 vi.mock("./features/issues/components/IssueTranscript", () => ({
   IssueTranscript: () => <div>Conversation canvas</div>,
 }));
@@ -175,6 +183,7 @@ function handler(
 }
 beforeEach(() => {
   localStorage.clear();
+  listeners.clear();
   invoke.mockReset();
   invoke.mockImplementation(handler);
 });
@@ -404,6 +413,50 @@ describe("repository-first application", () => {
         .at(-1)?.[1].args.targetId,
     ).toBe("agent");
     expect(invoke.mock.calls.some((c) => c[1].action === "prompt")).toBe(false);
+  });
+  it("marks activity in the right worktree and refreshes changed files", async () => {
+    render(<App />);
+    await screen.findByRole("button", { name: "README.md" });
+    act(() =>
+      listeners.forEach((callback) =>
+        callback({
+          payload: {
+            event: {
+              type: "file-activity",
+              properties: {
+                checkoutPath: agent.path,
+                path: "agent-only.rs",
+                access: "write",
+                observedAt: Date.now(),
+              },
+            },
+          },
+        }),
+      ),
+    );
+    expect(
+      screen.getByRole("option", { name: /\[active\] factory\/health/ }),
+    ).toBeTruthy();
+    expect(
+      screen
+        .getByRole("button", { name: "README.md" })
+        .querySelector("[data-access]"),
+    ).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /factory\/health/ }));
+    const file = await screen.findByRole("button", { name: /agent-only.rs/ });
+    expect(file.querySelector('[data-access="write"]')).not.toBeNull();
+    const reads = () =>
+      invoke.mock.calls.filter(
+        (call) =>
+          call[1].action === "repository_browse" &&
+          call[1].args.targetId === "agent",
+      ).length;
+    await waitFor(() => expect(reads()).toBeGreaterThan(1));
+    fireEvent.change(screen.getByLabelText("Checkout or worktree"), {
+      target: { value: "source" },
+    });
+    const source = await screen.findByRole("button", { name: "README.md" });
+    expect(source.querySelector("[data-access]")).toBeNull();
   });
   it("ignores a slow source response after switching to an agent worktree", async () => {
     let finish!: (value: unknown) => void;

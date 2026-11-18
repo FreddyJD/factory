@@ -1,8 +1,13 @@
-import { useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 import { api } from "../../../shared/api";
 import type { Inventory, Project, Browse } from "../../../shared/types";
 import { useResource } from "../../../shared/hooks/useResource";
-export function useRepository(project: Project, browseEnabled = true) {
+import type { FileActivity } from "./useFileActivity";
+export function useRepository(
+  project: Project,
+  browseEnabled = true,
+  activity: FileActivity[] = [],
+) {
   const inventory = useResource<Inventory>(
     project.id,
     () => api("repository_inventory", { projectId: project.id }),
@@ -27,6 +32,20 @@ export function useRepository(project: Project, browseEnabled = true) {
       }),
     2000,
   );
+  const lastWrite = Math.max(
+    0,
+    ...activity
+      .filter(
+        (item) => item.checkoutPath === target?.path && item.access === "write",
+      )
+      .map((item) => item.observedAt),
+  );
+  const refreshFiles = useEffectEvent(() => listing.refresh());
+  useEffect(() => {
+    if (!browseEnabled || !lastWrite) return;
+    const timer = window.setTimeout(refreshFiles, 120);
+    return () => clearTimeout(timer);
+  }, [lastWrite, browseEnabled, target?.id]);
   function choose(id: string) {
     setChoice(id);
     setPath("");

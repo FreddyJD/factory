@@ -1,3 +1,5 @@
+import { ActivityDot } from "../../../shared/components/ActivityDot";
+import { activityAt, type FileActivity } from "../hooks/useFileActivity";
 import { useState } from "react";
 import type {
   Browse,
@@ -9,17 +11,23 @@ import { Icon } from "../../../shared/components/Icon";
 import { Markdown } from "../../../shared/components/Markdown";
 export function CheckoutSelect({
   inventory,
+  activity,
   target,
   choose,
 }: {
   inventory?: Inventory;
+  activity: FileActivity[];
   target?: Checkout;
   choose: (id: string) => void;
 }) {
   return (
-    <div className="checkout-controls">
+    <div
+      className="checkout-controls"
+      title="Agent activity: blue for reads and search matches; green for changes. Dots fade after four seconds."
+    >
       <label className="checkout-select">
         <Icon name="branch" />
+        <ActivityDot activity={activityAt(activity, target?.path)} />
         <select
           aria-label="Checkout or worktree"
           value={target?.id ?? ""}
@@ -28,6 +36,7 @@ export function CheckoutSelect({
           {!target && <option value="">Select checkout</option>}
           {inventory?.targets.map((t) => (
             <option key={t.id} value={t.id}>
+              {activityAt(activity, t.path) ? "[active] " : ""}
               {t.branch}{" "}
               {t.source
                 ? "(source)"
@@ -42,6 +51,19 @@ export function CheckoutSelect({
         <Icon name="branch" />
         {inventory?.branches.length ?? 0} branches
       </span>
+      {inventory?.targets
+        .filter((t) => t.id !== target?.id && activityAt(activity, t.path))
+        .map((t) => (
+          <button
+            key={t.id}
+            className="worktree-activity"
+            onClick={() => choose(t.id)}
+            title={"View active worktree: " + t.branch}
+          >
+            <ActivityDot activity={activityAt(activity, t.path)} />
+            <span>{t.branch}</span>
+          </button>
+        ))}
       <span className="live-label">
         <i />
         Live filesystem
@@ -51,6 +73,7 @@ export function CheckoutSelect({
 }
 export function CodeBrowser({
   project,
+  activity,
   inventory,
   choose,
   onNewIssue,
@@ -63,6 +86,7 @@ export function CodeBrowser({
   refresh,
 }: {
   project: Project;
+  activity: FileActivity[];
   inventory?: Inventory;
   choose: (id: string) => void;
   onNewIssue: () => void;
@@ -84,7 +108,12 @@ export function CodeBrowser({
         role="toolbar"
         aria-label="Repository actions"
       >
-        <CheckoutSelect inventory={inventory} target={target} choose={choose} />
+        <CheckoutSelect
+          inventory={inventory}
+          activity={activity}
+          target={target}
+          choose={choose}
+        />
         <div className="search-box">
           <Icon name="search" />
           <input
@@ -143,6 +172,7 @@ export function CodeBrowser({
                     {project.name[0]?.toUpperCase()}
                   </span>
                   <strong>{target.branch}</strong>
+                  <ActivityDot activity={activityAt(activity, target.path)} />
                   <span className="muted">
                     {target.source ? "Source checkout" : "Worktree"}
                   </span>
@@ -207,6 +237,14 @@ export function CodeBrowser({
                                   />
                                 </span>
                                 {entry.name}
+                                <ActivityDot
+                                  activity={activityAt(
+                                    activity,
+                                    target.path,
+                                    entry.path,
+                                    entry.kind === "directory",
+                                  )}
+                                />
                               </button>
                             </td>
                             <td className="muted file-description">
@@ -238,6 +276,14 @@ export function CodeBrowser({
                 {data?.kind === "file" && (
                   <>
                     <div className="file-meta">
+                      <ActivityDot
+                        activity={activityAt(
+                          activity,
+                          target.path,
+                          path,
+                          false,
+                        )}
+                      />
                       {data.content?.split("\n").length ?? 0} lines{" "}
                       <span className="muted">
                         {" "}
