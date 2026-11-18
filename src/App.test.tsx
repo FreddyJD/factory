@@ -225,7 +225,7 @@ describe("repository-first application", () => {
       ).toBeGreaterThan(inventoryCalls);
     });
     fireEvent.click(within(toolbar).getByRole("button", { name: "New issue" }));
-    await screen.findByLabelText("Title");
+    await screen.findByLabelText("Description");
   });
   it("preserves nested breadcrumbs and parent navigation", async () => {
     invoke.mockImplementation((command, params) => {
