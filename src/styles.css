@@ -458,13 +458,8 @@ input[type="radio"] {
   font-size: 12px;
   font-weight: 600;
 }
-.sidebar-heading button {
-  display: grid;
-  place-items: center;
-  border: 0;
-  background: none;
-  color: #57606a;
-  padding: 3px;
+.app-sidebar > nav > .sidebar-link {
+  margin-bottom: 12px;
 }
 .project-subnav {
   margin: 5px 0 11px 28px;
@@ -510,17 +505,6 @@ input[type="radio"] {
   padding: 0 24px;
   border-bottom: 1px solid #eaecef;
   background: #fff;
-}
-.global-breadcrumb {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-weight: 600;
-  font-size: 13px;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .global-actions {
   display: flex;
@@ -1569,12 +1553,10 @@ input[type="radio"] {
   .app-sidebar > nav > .sidebar-link {
     width: auto;
     white-space: nowrap;
+    margin-bottom: 0;
+    flex-shrink: 0;
   }
   .sidebar-heading {
-    padding: 5px;
-    gap: 8px;
-  }
-  .sidebar-heading > span {
     display: none;
   }
   .project-list {
@@ -1741,46 +1723,7 @@ input[type="radio"] {
 .global-header[data-tauri-drag-region] {
   user-select: none;
 }
-.mac-controls {
-  position: fixed;
-  left: 15px;
-  top: 15px;
-  height: 20px;
-  gap: 8px;
-  margin: 0;
-  z-index: 20;
-  flex-direction: row-reverse;
-}
-.mac-controls button {
-  width: 12px;
-  height: 12px;
-  min-width: 12px;
-  padding: 0;
-  border: 1px solid #0002;
-  border-radius: 50%;
-  font-size: 10px;
-  color: transparent;
-}
-.mac-controls button:nth-child(1) {
-  background: #febc2e;
-  order: 1;
-}
-.mac-controls button:nth-child(2) {
-  background: #28c840;
-  order: 0;
-}
-.mac-controls button:nth-child(3) {
-  background: #ff5f57;
-  order: 2;
-}
-.mac-controls:hover button {
-  color: #0009;
-}
-.mac-controls button:last-child:hover {
-  background: #ff5f57;
-  color: #0009;
-}
-body:has(.mac-controls) .global-header {
+.application.macos .global-header {
   padding-left: 96px;
 }
 .provider-row {
@@ -1825,9 +1768,6 @@ body:has(.mac-controls) .global-header {
   .window-controls {
     margin-right: -22px;
   }
-  .mac-controls {
-    margin: 0;
-  }
 }
 @media (max-width: 720px) {
   .window-controls {
@@ -1836,15 +1776,6 @@ body:has(.mac-controls) .global-header {
   .window-controls button {
     min-width: 30px;
     padding: 0 6px;
-  }
-  .mac-controls {
-    top: 19px;
-    left: 15px;
-    margin: 0;
-  }
-  .mac-controls button {
-    min-width: 12px;
-    padding: 0;
   }
   .provider-row {
     flex-direction: column;

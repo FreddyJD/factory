@@ -196,6 +196,47 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 describe("repository-first application", () => {
+  it("keeps a single navigation CTA available with no projects", async () => {
+    invoke.mockImplementation((command, params) =>
+      params.action === "status"
+        ? { ...(handler(command, params) as object), projects: [], tasks: [] }
+        : handler(command, params),
+    );
+    render(<App />);
+    await screen.findByRole("heading", { name: "Open a repository" });
+    expect(screen.getAllByRole("button", { name: "Open project" })).toHaveLength(
+      1,
+    );
+    const nav = screen.getByRole("navigation", { name: "Application" });
+    fireEvent.click(within(nav).getByRole("button", { name: "Open project" }));
+    await screen.findByRole("button", { name: "README.md" });
+  });
+
+  it("disables the navigation CTA while the folder picker is open", async () => {
+    let finish!: () => void;
+    invoke.mockImplementation((command, params) =>
+      params.action === "project_open"
+        ? new Promise((resolve) => {
+            finish = () => resolve(null);
+          })
+        : handler(command, params),
+    );
+    render(<App />);
+    await screen.findByRole("button", { name: "README.md" });
+    fireEvent.click(screen.getByRole("button", { name: "Open project" }));
+    const opening = screen.getByRole("button", { name: "Opening…" });
+    expect((opening as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(opening);
+    expect(
+      invoke.mock.calls.filter((c) => c[1].action === "project_open"),
+    ).toHaveLength(1);
+    await act(async () => finish());
+    expect(
+      (screen.getByRole("button", { name: "Open project" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+  });
+
   it.each([
     "failed",
     "review",
@@ -387,7 +428,16 @@ describe("repository-first application", () => {
     expect(screen.queryByText("Local", { exact: true })).toBeNull();
     const header = screen.getByRole("banner");
     expect(header.parentElement?.className).toBe("application");
-    expect(within(header).getAllByText("factory")).toHaveLength(1);
+    expect(within(header).queryByText("factory")).toBeNull();
+    expect(
+      within(header).queryByRole("button", { name: "Open project" }),
+    ).toBeNull();
+    expect(
+      within(screen.getByRole("navigation", { name: "Application" })).getByRole(
+        "button",
+        { name: "Open project" },
+      ),
+    ).toBeTruthy();
     fireEvent.change(within(toolbar).getByLabelText("Filter files"), {
       target: { value: "readme" },
     });
@@ -926,7 +976,7 @@ describe("repository-first application", () => {
           ?.getAttribute("value"),
       ).toBe("api-source"),
     );
-    fireEvent.click(screen.getAllByRole("button", { name: "Open project" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Open project" }));
     await waitFor(() =>
       expect(
         screen

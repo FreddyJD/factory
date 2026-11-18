@@ -55,14 +55,10 @@ export function App() {
     ? tasks.filter((t) => belongs(t, projects.project!))
     : [];
   return (
-    <div className="application">
+    <div
+      className={`application${desktop && /Mac/.test(navigator.platform) ? " macos" : ""}`}
+    >
       <header className="global-header" data-tauri-drag-region>
-        <span className="global-breadcrumb">
-          <Icon name={section === "settings" ? "settings" : "repo"} />
-          {section === "repository"
-            ? (projects.project?.name ?? "factory")
-            : "Settings"}
-        </span>
         <div className="global-actions">
           <span className="muted">{version}</span>
           {preview ? (
@@ -70,14 +66,6 @@ export function App() {
           ) : (
             !desktop && <span className="label">Browser preview</span>
           )}
-          <button
-            className="btn btn-default btn-sm"
-            disabled={opening}
-            onClick={() => void open()}
-          >
-            <Icon name="plus" />
-            {opening ? "Opening…" : "Open project"}
-          </button>
         </div>
         <WindowControls />
       </header>
@@ -89,6 +77,7 @@ export function App() {
         onProject={choose}
         onSection={setSection}
         onTab={setTab}
+        opening={opening}
         onOpen={() => void open()}
       />
       <div className="app-content">
@@ -114,13 +103,9 @@ export function App() {
             <main className="empty-repository">
               <Icon name="repo" size={36} />
               <h1>Open a repository</h1>
-              <button
-                className="btn btn-success"
-                disabled={opening}
-                onClick={() => void open()}
-              >
-                Open project
-              </button>
+              <p className="muted">
+                Choose Open project in the navigation to get started.
+              </p>
               {!desktop && (
                 <p className="muted">
                   Run <code>npm run tauri dev</code> to browse your

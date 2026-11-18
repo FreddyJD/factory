@@ -8,6 +8,7 @@ export function ProjectSidebar({
   onProject,
   onSection,
   onTab,
+  opening,
   onOpen,
 }: {
   projects: Project[];
@@ -17,20 +18,18 @@ export function ProjectSidebar({
   onProject: (id: string) => void;
   onSection: (s: "repository" | "settings") => void;
   onTab: (t: Tab) => void;
+  opening: boolean;
   onOpen: () => void;
 }) {
   return (
     <aside className="app-sidebar">
       <nav aria-label="Application">
+        <button className="sidebar-link" disabled={opening} onClick={onOpen}>
+          <Icon name="plus" />
+          {opening ? "Opening…" : "Open project"}
+        </button>
         <div className="sidebar-heading">
           <span>Projects</span>
-          <button
-            aria-label="Open project"
-            title="Open project"
-            onClick={onOpen}
-          >
-            <Icon name="plus" size={14} />
-          </button>
         </div>
         <div className="project-list">
           {projects.map((project) => (
@@ -73,12 +72,6 @@ export function ProjectSidebar({
             </div>
           ))}
         </div>
-        {!projects.length && (
-          <button className="sidebar-link" onClick={onOpen}>
-            <Icon name="plus" />
-            Open repository
-          </button>
-        )}
       </nav>
       <div className="sidebar-bottom">
         <button
