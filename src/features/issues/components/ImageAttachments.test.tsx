@@ -263,6 +263,7 @@ describe("issue images", () => {
           onCode={vi.fn()}
           onChange={vi.fn()}
           onLocalReview={vi.fn()}
+          github={false}
         />,
       );
       const field = screen.getByLabelText("Issue comment");
@@ -316,6 +317,7 @@ describe("issue images", () => {
         onCode={vi.fn()}
         onChange={vi.fn()}
         onLocalReview={vi.fn()}
+        github={false}
       />,
     );
     const field = screen.getByLabelText("Issue comment");
@@ -359,6 +361,7 @@ describe("issue images", () => {
         onCode={vi.fn()}
         onChange={vi.fn()}
         onLocalReview={vi.fn()}
+        github={false}
       />,
     );
     const queue = screen.getByRole("region", { name: "Queued comments" });
