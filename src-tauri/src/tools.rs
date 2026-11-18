@@ -503,7 +503,11 @@ pub fn inspect(
             ))
         }
         "glob" | "grep" => {
-            let path = resolve(task, args["path"].as_str().unwrap_or("."), true)?;
+            // Unix ignore matching strips raw prefixes, so a retained /./ in
+            // the walk root can prevent anchored patterns from matching.
+            let path =
+                dunce::canonicalize(resolve(task, args["path"].as_str().unwrap_or("."), true)?)
+                    .map_err(|e| e.to_string())?;
             let pattern = text(args, "pattern")?;
             let glob = if name == "glob" {
                 Some(
@@ -1268,6 +1272,34 @@ mod tests {
             found.contains("drop.log"),
             "Parent ignores must not widen explicit search scope"
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn anchored_search_ignores_match_normalized_dot_paths() {
+        let (root, task) = fixture();
+        fs::create_dir_all(root.join("src/cache")).unwrap();
+        fs::write(root.join("src/.gitignore"), "/cache/*\n!/cache/keep.txt\n").unwrap();
+        fs::write(root.join("src/cache/keep.txt"), "needle").unwrap();
+        fs::write(root.join("src/cache/drop.txt"), "needle").unwrap();
+        for path in ["src", "./src/.", "./src/./cache/.."] {
+            // Parent traversal stays forbidden even if canonicalization could resolve it.
+            if path.ends_with("..") {
+                assert!(inspect(
+                    &task,
+                    "glob",
+                    &json!({"path":path,"pattern":"**/*.txt"}),
+                    &CancellationToken::new(),
+                    &|_, _| {}
+                )
+                .is_err());
+                continue;
+            }
+            for name in ["glob", "grep"] {
+                let found = inspect(&task, name, &json!({"path":path,"pattern":if name == "glob" { "**/*.txt" } else { "needle" }}), &CancellationToken::new(), &|_, _| {}).unwrap();
+                assert!(found.contains("keep.txt"), "{name} {path}: {found}");
+                assert!(!found.contains("drop.txt"), "{name} {path}: {found}");
+            }
+        }
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
