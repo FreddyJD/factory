@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauri } from "@tauri-apps/api/core";
+import { isMacDesktop } from "../platform";
 export function WindowControls() {
   const [error, setError] = useState("");
-  const mac = /Mac/.test(navigator.platform);
-  if (!isTauri()) return null;
+  if (!isTauri() || isMacDesktop()) return null;
   function run(action: "minimize" | "toggleMaximize" | "close") {
     void getCurrentWindow()
       [action]()
@@ -12,7 +12,7 @@ export function WindowControls() {
   }
   return (
     <div
-      className={`window-controls ${mac ? "mac-controls" : "standard-controls"}`}
+      className="window-controls standard-controls"
       aria-label="Window controls"
     >
       <button

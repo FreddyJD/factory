@@ -3,6 +3,7 @@ import { version } from "../package.json";
 import { api, desktop, preview } from "./shared/api";
 import { belongs, type Tab } from "./shared/types";
 import { WindowControls } from "./shared/components/WindowControls";
+import { isMacDesktop } from "./shared/platform";
 import { Icon } from "./shared/components/Icon";
 import { useProjects } from "./features/projects/hooks/useProjects";
 import { ProjectSidebar } from "./features/projects/components/ProjectSidebar";
@@ -55,7 +56,7 @@ export function App() {
     ? tasks.filter((t) => belongs(t, projects.project!))
     : [];
   return (
-    <div className="application">
+    <div className={`application${isMacDesktop() ? " macos-window" : ""}`}>
       <header className="global-header" data-tauri-drag-region>
         <span className="global-breadcrumb">
           <Icon name={section === "settings" ? "settings" : "repo"} />

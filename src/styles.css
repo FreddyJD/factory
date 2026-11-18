@@ -1741,46 +1741,8 @@ input[type="radio"] {
 .global-header[data-tauri-drag-region] {
   user-select: none;
 }
-.mac-controls {
-  position: fixed;
-  left: 15px;
-  top: 15px;
-  height: 20px;
-  gap: 8px;
-  margin: 0;
-  z-index: 20;
-  flex-direction: row-reverse;
-}
-.mac-controls button {
-  width: 12px;
-  height: 12px;
-  min-width: 12px;
-  padding: 0;
-  border: 1px solid #0002;
-  border-radius: 50%;
-  font-size: 10px;
-  color: transparent;
-}
-.mac-controls button:nth-child(1) {
-  background: #febc2e;
-  order: 1;
-}
-.mac-controls button:nth-child(2) {
-  background: #28c840;
-  order: 0;
-}
-.mac-controls button:nth-child(3) {
-  background: #ff5f57;
-  order: 2;
-}
-.mac-controls:hover button {
-  color: #0009;
-}
-.mac-controls button:last-child:hover {
-  background: #ff5f57;
-  color: #0009;
-}
-body:has(.mac-controls) .global-header {
+.macos-window .global-header {
+  /* Leave room for the native traffic lights in the overlay title bar. */
   padding-left: 96px;
 }
 .provider-row {
@@ -1825,9 +1787,6 @@ body:has(.mac-controls) .global-header {
   .window-controls {
     margin-right: -22px;
   }
-  .mac-controls {
-    margin: 0;
-  }
 }
 @media (max-width: 720px) {
   .window-controls {
@@ -1836,15 +1795,6 @@ body:has(.mac-controls) .global-header {
   .window-controls button {
     min-width: 30px;
     padding: 0 6px;
-  }
-  .mac-controls {
-    top: 19px;
-    left: 15px;
-    margin: 0;
-  }
-  .mac-controls button {
-    min-width: 12px;
-    padding: 0;
   }
   .provider-row {
     flex-direction: column;
