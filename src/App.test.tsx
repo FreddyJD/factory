@@ -502,6 +502,8 @@ describe("repository-first application", () => {
     fireEvent.click(await screen.findByRole("button", { name: "New issue" }));
     const title = await screen.findByLabelText("Title");
     await screen.findByRole("option", { name: "Fixture model" });
+    expect(screen.getByText(/All tool calls run automatically without approval prompts/)).toBeTruthy();
+    expect(screen.queryByRole("checkbox", { name: /Allow native file edits/ })).toBeNull();
     fireEvent.change(title, { target: { value: "Fix health endpoint" } });
     fireEvent.change(screen.getByLabelText("Description"), {
       target: { value: "Return 200 and add tests" },
@@ -548,14 +550,17 @@ describe("repository-first application", () => {
       ).toBe("source"),
     );
   });
-  it("clears old tool approvals when leaving an issue", async () => {
+  it("shows automatic tool execution without approval buttons for retained issues", async () => {
     render(<App />);
     const nav = await screen.findByRole("navigation", { name: "Repository" });
     fireEvent.click(within(nav).getByRole("button", { name: /Issues/ }));
     fireEvent.click(
       await screen.findByRole("button", { name: /Add health endpoint/ }),
     );
-    await screen.findByRole("button", { name: "Allow once" });
+    await screen.findByText(/All tool calls auto-approved/);
+    expect(screen.queryByRole("button", { name: "Allow once" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reject" })).toBeNull();
+    expect(screen.queryByText(/Approval required/)).toBeNull();
     fireEvent.click(within(nav).getByRole("button", { name: "Code" }));
     expect(screen.queryByRole("button", { name: "Allow once" })).toBeNull();
   });
