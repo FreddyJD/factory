@@ -36,6 +36,7 @@ const image = () =>
   new File(["png bytes"], "screen.png", { type: "image/png" });
 
 function setup(vision?: boolean) {
+  localStorage.clear();
   api.mockReset();
   api.mockImplementation(async (action: string) => {
     if (action === "models")
@@ -51,6 +52,12 @@ function setup(vision?: boolean) {
         connected: ["provider"],
       };
     if (action === "issue_create") return task;
+    if (action === "github_status")
+      return {
+        repository: "acme/factory",
+        account: "reviewer",
+        defaultBranch: "main",
+      };
     if (action === "prompt") return true;
     throw Error(`Unexpected ${action}`);
   });

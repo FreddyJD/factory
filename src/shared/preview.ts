@@ -65,8 +65,7 @@ export async function previewApi(
             : "Add a GET /health endpoint that returns HTTP 200. Add a focused regression test.",
           createdAt: 1794930000,
           nativeEdits: true,
-          autoPr: false,
-          validation: "cargo test",
+          autoPr: true,
           outcome: index ? "completed" : "working",
           stopReason: "",
           publication: null,
@@ -208,6 +207,13 @@ export async function previewApi(
       return { all: [], connected: [] };
     case "providers":
       return [];
+    case "github_status":
+      return {
+        repository: "FreddyJD/factory",
+        account: "FreddyJD",
+        defaultBranch: "main",
+        permission: "WRITE",
+      };
     case "local_reviews":
       return {
         issues: tasks.slice(1).map((task) => ({
@@ -230,7 +236,6 @@ export async function previewApi(
         tree: "abc123",
         diff: "diff --git a/src/session.rs b/src/session.rs\n+recover_interrupted_session();",
         mode: "fast-forward",
-        validation: "cargo test",
         sourcePath: project.path,
       };
     case "pr_list":

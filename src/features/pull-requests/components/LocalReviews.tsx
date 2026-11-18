@@ -13,7 +13,6 @@ interface LocalPreview {
   tree: string;
   diff: string;
   mode: string;
-  validation: string;
   sourcePath: string;
 }
 export function LocalReviews({

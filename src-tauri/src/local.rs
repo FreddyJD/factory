@@ -145,7 +145,7 @@ pub async fn preview(root: &Path, project: &Project, id: &str) -> Result<Value> 
         return Err("Git history changed while preparing review; refresh".into());
     }
     Ok(
-        json!({"projectId":project.id,"taskId":id,"title":issue.title,"sourcePath":project.path,"sourceRef":source_ref,"sourceHead":source_head,"worktree":checkout.path,"branch":branch,"head":head,"tree":tree,"diff":diff,"mode":"fast-forward","validation":issue.validation}),
+        json!({"projectId":project.id,"taskId":id,"title":issue.title,"sourcePath":project.path,"sourceRef":source_ref,"sourceHead":source_head,"worktree":checkout.path,"branch":branch,"head":head,"tree":tree,"diff":diff,"mode":"fast-forward"}),
     )
 }
 pub async fn merge(root: &Path, project: &Project, id: &str, expected: &Value) -> Result<Value> {

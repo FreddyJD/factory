@@ -177,6 +177,13 @@ function handler(
       return {};
     case "issue_create":
       return task;
+    case "github_status":
+      return {
+        repository: "acme/factory",
+        account: "reviewer",
+        defaultBranch: "main",
+        permission: "WRITE",
+      };
     default:
       throw Error(`Unexpected API operation: ${action}`);
   }
@@ -588,6 +595,9 @@ describe("repository-first application", () => {
     expect(
       screen.queryByRole("checkbox", { name: /Allow native file edits/ }),
     ).toBeNull();
+    expect(screen.queryByLabelText("Validation command")).toBeNull();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.queryByText(/Authorize commit and push/)).toBeNull();
     fireEvent.change(screen.getByLabelText("Description"), {
       target: { value: "Return 200 and add tests" },
     });
@@ -607,10 +617,194 @@ describe("repository-first application", () => {
       images: [],
       projectId: "project-a",
       nativeEdits: true,
-      autoPr: false,
+      autoPr: true,
+      githubTarget: handler("factory_api", {
+        action: "github_status",
+        args: {},
+      }),
     });
     expect(args).not.toHaveProperty("title");
+    expect(args).not.toHaveProperty("validation");
     await act(async () => finish(task));
+  });
+  it("persists the default-on automatic PR preference in Settings for new issues", async () => {
+    render(<App />);
+    await screen.findByRole("button", { name: "README.md" });
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const preference = await screen.findByRole("checkbox", {
+      name: "Automatically create a draft pull request",
+    });
+    expect((preference as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(preference);
+    expect(localStorage.getItem("factory-auto-pr")).toBe("false");
+    cleanup();
+
+    render(<App />);
+    await screen.findByRole("button", { name: "README.md" });
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(
+      (
+        (await screen.findByRole("checkbox", {
+          name: "Automatically create a draft pull request",
+        })) as HTMLInputElement
+      ).checked,
+    ).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "factory" }));
+    fireEvent.click(await screen.findByRole("button", { name: "New issue" }));
+    await screen.findByRole("option", { name: "Fixture model" });
+    fireEvent.change(screen.getByLabelText("Description"), {
+      target: { value: "Work locally without publishing" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Create issue and run" }),
+    );
+    await waitFor(() =>
+      expect(
+        invoke.mock.calls.find((c) => c[1].action === "issue_create")?.[1].args,
+      ).toMatchObject({ autoPr: false, githubTarget: null }),
+    );
+    expect(invoke.mock.calls.some((c) => c[1].action === "github_status")).toBe(
+      false,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(
+      await screen.findByRole("checkbox", {
+        name: "Automatically create a draft pull request",
+      }),
+    );
+    expect(localStorage.getItem("factory-auto-pr")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "factory" }));
+    fireEvent.click(await screen.findByRole("button", { name: "New issue" }));
+    await screen.findByRole("option", { name: "Fixture model" });
+    fireEvent.change(screen.getByLabelText("Description"), {
+      target: { value: "Publish this change" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Create issue and run" }),
+    );
+    await waitFor(() =>
+      expect(
+        invoke.mock.calls
+          .filter((c) => c[1].action === "issue_create")
+          .at(-1)?.[1].args,
+      ).toMatchObject({ autoPr: true }),
+    );
+  });
+  it("blocks issue submission until GitHub access is checked", async () => {
+    let finish!: (value: unknown) => void;
+    invoke.mockImplementation((command, params) =>
+      params.action === "github_status"
+        ? new Promise((resolve) => {
+            finish = resolve;
+          })
+        : handler(command, params),
+    );
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "New issue" }));
+    await screen.findByRole("option", { name: "Fixture model" });
+    const description = screen.getByLabelText("Description");
+    fireEvent.change(description, { target: { value: "Make a change" } });
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Create issue and run",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    fireEvent.submit(description.closest("form")!);
+    expect(invoke.mock.calls.some((c) => c[1].action === "issue_create")).toBe(
+      false,
+    );
+    await act(async () =>
+      finish(handler("factory_api", { action: "github_status", args: {} })),
+    );
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Create issue and run",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
+  });
+  it("links to Settings when automatic PRs cannot access GitHub", async () => {
+    invoke.mockImplementation((command, params) => {
+      if (params.action === "github_status")
+        throw Error("Sign in with gh auth login");
+      return handler(command, params);
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "New issue" }));
+    await screen.findByText(/Sign in with gh auth login/);
+    const description = screen.getByLabelText("Description");
+    fireEvent.change(description, { target: { value: "Make a change" } });
+    fireEvent.submit(description.closest("form")!);
+    expect(invoke.mock.calls.some((c) => c[1].action === "issue_create")).toBe(
+      false,
+    );
+    fireEvent.click(
+      within(document.querySelector(".issue-options") as HTMLElement).getByRole(
+        "button",
+        { name: "Settings" },
+      ),
+    );
+    await screen.findByRole("checkbox", {
+      name: "Automatically create a draft pull request",
+    });
+  });
+  it("publishes a completed issue without a validation command", async () => {
+    const issue = {
+      taskId: task.id,
+      projectId: "project-a",
+      outcome: "completed",
+      publication: null,
+    };
+    const preview = {
+      branch: "factory/health",
+      repository: "acme/factory",
+      base: "main",
+      account: "reviewer",
+      diff: "+change",
+      added: [],
+    };
+    invoke.mockImplementation((command, params) => {
+      if (params.action === "status")
+        return { ...(handler(command, params) as object), issues: [issue] };
+      if (params.action === "snapshot")
+        return {
+          task: { ...task, status: "review" },
+          messages: [],
+          questions: [],
+          status: { type: "idle" },
+        };
+      if (params.action === "pr_preview") return preview;
+      if (params.action === "pr_publish") return true;
+      return handler(command, params);
+    });
+    render(<App />);
+    const nav = await screen.findByRole("navigation", { name: "Repository" });
+    fireEvent.click(within(nav).getByRole("button", { name: /Issues/ }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Add health endpoint/ }),
+    );
+    const prepare = await screen.findByRole("button", {
+      name: "Create draft PR",
+    });
+    await waitFor(() =>
+      expect((prepare as HTMLButtonElement).disabled).toBe(false),
+    );
+    fireEvent.click(prepare);
+    const publish = await screen.findByRole("button", {
+      name: "Commit, push and create draft PR",
+    });
+    expect((publish as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByText(/Validation command/)).toBeNull();
+    fireEvent.click(publish);
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("factory_api", {
+        action: "pr_publish",
+        args: { taskId: task.id, preview },
+      }),
+    );
   });
   it("reopens the explicitly selected existing project", async () => {
     render(<App />);
@@ -667,7 +861,6 @@ describe("repository-first application", () => {
       tree: "c".repeat(40),
       diff: "+local content",
       mode: "fast-forward",
-      validation: "",
     };
     invoke.mockImplementation((command, params) =>
       params.action === "local_reviews"
@@ -723,7 +916,6 @@ describe("repository-first application", () => {
       tree: "c".repeat(40),
       diff: "+native local",
       mode: "fast-forward",
-      validation: "",
     };
     let finish!: (value: unknown) => void;
     invoke.mockImplementation((command, params) =>
