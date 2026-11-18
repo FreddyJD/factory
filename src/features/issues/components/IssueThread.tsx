@@ -117,48 +117,6 @@ export function IssueThread({
           <div className="panel conversation-panel">
             <IssueTranscript lines={lines} />
           </div>
-          {snapshot?.permissions.map((permission) => (
-            <section className="panel permission-panel" key={permission.id}>
-              <div className="panel-heading">
-                Approval required: <strong>{permission.permission}</strong>
-              </div>
-              <div className="panel-body">
-                <pre>{JSON.stringify(permission.metadata, null, 2)}</pre>
-                <div className="button-row">
-                  <button
-                    className="btn btn-success"
-                    disabled={!!busy}
-                    onClick={() =>
-                      void action("Approving", async () => {
-                        await api("permission", {
-                          taskId: task.id,
-                          requestId: permission.id,
-                          allow: true,
-                        });
-                      })
-                    }
-                  >
-                    Allow once
-                  </button>
-                  <button
-                    className="btn btn-default"
-                    disabled={!!busy}
-                    onClick={() =>
-                      void action("Rejecting", async () => {
-                        await api("permission", {
-                          taskId: task.id,
-                          requestId: permission.id,
-                          allow: false,
-                        });
-                      })
-                    }
-                  >
-                    Reject
-                  </button>
-                </div>
-              </div>
-            </section>
-          ))}
           {snapshot?.questions.map((request) => (
             <QuestionForm
               key={request.id}
@@ -375,12 +333,7 @@ export function IssueThread({
           )}
           <hr />
           <h4>Execution</h4>
-          <p className="muted">
-            Native Rust ·{" "}
-            {issue?.nativeEdits
-              ? "Worktree edits authorized"
-              : "Edits require approval"}
-          </p>
+          <p className="muted">Native Rust · All tool calls auto-approved</p>
         </aside>
       </div>
     </section>

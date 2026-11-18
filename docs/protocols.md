@@ -27,9 +27,9 @@ The result includes the task ID, worktree path(s), branches, and base commits. O
 
 `session/new.cwd` must exactly match the prepared task directory. Factory does not silently substitute the source checkout or rewrite diff/location paths. Source unsaved buffers and dirty changes are not copied. Use a new prepared task for a new independent editor session. Do not open a task simultaneously in desktop execution and ACP; the ownership lock rejects that.
 
-Implemented: initialize (wire version 1), session/new, session/prompt, session/cancel, session/update and bidirectional session/request_permission. Prompt responses remain outstanding while tool activity/permissions stream. Only implemented text/resource-link prompt and MCP capabilities are advertised; history loading, listing, forks, modes, and configuration extensions are not exposed. ACP auth is performed through desktop onboarding, not a dummy authenticate RPC.
+Implemented: initialize (wire version 1), session/new, session/prompt, session/cancel and session/update. Prompt responses remain outstanding while tool activity streams. All available tool calls execute automatically; Factory does not send session/request_permission. Only implemented text/resource-link prompt and MCP capabilities are advertised; history loading, listing, forks, modes, and configuration extensions are not exposed. ACP auth is performed through desktop onboarding, not a dummy authenticate RPC.
 
-Editor MCP server declarations connect through the native Rust rmcp client. Local stdio and unauthenticated HTTPS streamable HTTP are supported; remote OAuth/custom headers, legacy SSE transport, image/embedded resource blocks and extra directories are rejected rather than silently ignored. Factory executes native tools, not editor filesystem callbacks. Questions are excluded from baseline ACP; ordinary assistant questions can be answered in the next prompt. Permissions use only allow-once/reject-once. Prompt completion is emitted after the native session becomes idle; cancellation resolves active waiters and retains worktree files.
+Editor MCP server declarations connect through the native Rust rmcp client. Local stdio and unauthenticated HTTPS streamable HTTP are supported; remote OAuth/custom headers, legacy SSE transport, image/embedded resource blocks and extra directories are rejected rather than silently ignored. Factory executes native tools, not editor filesystem callbacks. Questions are excluded from baseline ACP; ordinary assistant questions can be answered in the next prompt. Prompt completion is emitted after the native session becomes idle; cancellation stops execution and retains worktree files.
 
 ## Factory MCP Server
 
@@ -46,13 +46,13 @@ Editor MCP server declarations connect through the native Rust rmcp client. Loca
 
 Default tools: `factory_workspace`, `factory_tasks`, `factory_diff`. Task IDs are validated and access is restricted to the configured source workspace.
 
-Add `--allow-execution` only when intentionally granting the connected client permission to create worktrees and submit coding work. This exposes `factory_start`, `factory_snapshot`, `factory_prompt`, `factory_cancel`, `factory_close`. It does not allow an agent to approve its own shell/edit permissions. A human uses:
+Add `--allow-execution` only when intentionally granting the connected client permission to create worktrees and submit coding work. This exposes `factory_start`, `factory_snapshot`, `factory_prompt`, `factory_cancel`, `factory_close`. Once execution is enabled, all available tools in those coding sessions run automatically with the user's account permissions, without further approval. The retained command below only reports that approvals are automatic:
 
 ```sh
 factory-cli review TASK_ID
 ```
 
-This requires an interactive terminal, displays pending requests and metadata from the existing owning worker using user-private native interaction records, and accepts only literal `yes` for one-time approval. Do not connect this command as a model-callable tool. For question-tool interactions, prefer the desktop workflow; MCP-owner questions are not yet answerable through this CLI.
+For question-tool interactions, prefer the desktop workflow; MCP-owner questions are not yet answerable through this CLI. The snapshot permissions array is retained as an empty array for existing clients.
 
 Supported stdio profiles:
 
@@ -78,10 +78,10 @@ Factory forces local-server cwd to the task directory. Relative filesystem serve
 { "type": "remote", "url": "https://your-trusted-server.example/mcp" }
 ```
 
-Active connections are native-session-local. The repository UI can persist explicitly trusted project server configuration and attach it to new issues; secrets in configuration environment fields are local plaintext under app data. The client negotiates modern 2026-07-28 discovery with legacy fallback, namespaces dynamic tools, validates schemas, and supports MCP resource tools when advertised. All external calls require explicit approval. Unsupported elicitation/authentication fails rather than inventing user responses. Remote custom headers/OAuth are not implemented. Local environment configuration is trusted executable configuration, not confined filesystem access.
+Active connections are native-session-local. The repository UI can persist explicitly trusted project server configuration and attach it to new issues; secrets in configuration environment fields are local plaintext under app data. The client negotiates modern 2026-07-28 discovery with legacy fallback, namespaces dynamic tools, validates schemas, and supports MCP resource tools when advertised. All available external tool and resource calls run automatically without approval. Unsupported elicitation/authentication fails rather than inventing user responses. Remote custom headers/OAuth are not implemented. Local environment configuration is trusted executable configuration, not confined filesystem access.
 
 ## Limits
 
 Configure inference in desktop Settings: GitHub device sign-in or an OpenAI-compatible endpoint. GitHub uses the experimental Roxy-compatible shared public client identity unless overridden. Direct Copilot inference remains undocumented. Copilot supports native Chat Completions, Responses and Messages transports according to its account catalog; coding runs require advertised tool support. Manually configured OpenAI-compatible endpoints remain Chat Completions. Endpoint model selections use `endpoint:CONNECTION_ID/MODEL_ID`.
 
-No remote ACP hosting, network-accessible Factory API, editor certification, distributed scheduling, or unattended approvals in this MVP. Desktop and CLI share task records and ownership locks, not one live central daemon. Close an owner before transferring the task to another execution surface.
+No remote ACP hosting, network-accessible Factory API, editor certification or distributed scheduling in this MVP. Tool execution is unattended by default. Desktop and CLI share task records and ownership locks, not one live central daemon. Close an owner before transferring the task to another execution surface.

@@ -261,15 +261,6 @@ async fn factory_api(
             factory.close(text("taskId")?).await?;
             Ok(json!(true))
         }
-        "permission" => {
-            factory
-                .permission(
-                    text("taskId")?,
-                    text("requestId")?,
-                    args["allow"].as_bool().ok_or("Missing approval")?,
-                )
-                .await
-        }
         "question" => {
             factory
                 .question(
