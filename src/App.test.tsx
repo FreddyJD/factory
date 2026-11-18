@@ -28,7 +28,11 @@ vi.mock("./features/issues/components/IssueTranscript", () => ({
   IssueTranscript: () => <div>Conversation canvas</div>,
 }));
 vi.mock("./features/repository/components/FactoryScene", () => ({
-  default: () => <div>3D factory scene</div>,
+  default: ({ targets }: { targets: { id: string }[] }) => (
+    <div data-testid="scene-targets">
+      {targets.map((target) => target.id).join(",")}
+    </div>
+  ),
 }));
 const projects = [
   { id: "project-a", name: "factory", path: "/repo" },
@@ -201,6 +205,33 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 describe("factory view", () => {
+  it("builds stations only for active worktrees and closes the line after completion", async () => {
+    let status = "working";
+    invoke.mockImplementation((command, params) =>
+      params.action === "status"
+        ? {
+            ...(handler(command, params) as object),
+            tasks: [{ ...task, status }],
+          }
+        : handler(command, params),
+    );
+    render(<App />);
+    await screen.findByRole("button", { name: "README.md" });
+    fireEvent.click(screen.getByRole("button", { name: "Factory view" }));
+    expect((await screen.findByTestId("scene-targets")).textContent).toBe(
+      "agent",
+    );
+    status = "review";
+    act(() => window.dispatchEvent(new Event("focus")));
+    await screen.findByText(
+      "No active worktrees. Start an agent to open the line.",
+    );
+    expect(screen.queryByTestId("scene-targets")).toBeNull();
+    expect(
+      (screen.getByLabelText("Checkout or worktree") as HTMLSelectElement)
+        .options,
+    ).toHaveLength(2);
+  });
   it("gates the factory beside the checkout dropdown and preserves the file path", async () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "README.md" }));

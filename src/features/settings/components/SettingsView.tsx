@@ -119,8 +119,8 @@ export function SettingsView({
                       </strong>
                       <small>
                         {theme === "kitchen"
-                          ? "Tiny chefs. Freshly cooked code."
-                          : "Little buildings. Busy conveyor belts."}
+                          ? "A sushi crew on one shared belt."
+                          : "One production line. Packages to dispatch."}
                       </small>
                     </span>
                   </label>

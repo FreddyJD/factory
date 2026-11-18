@@ -1,5 +1,6 @@
 import { lazy, Suspense, useState } from "react";
-import { preview } from "../../../shared/api";
+import { preview, type Task } from "../../../shared/api";
+import { activeWorktrees } from "../production-line";
 import type { Checkout, Inventory } from "../../../shared/types";
 import type { Visualization } from "../../../shared/visualization";
 import { Icon } from "../../../shared/components/Icon";
@@ -14,6 +15,7 @@ export function FactoryView({
   visualization,
   inventory,
   target,
+  tasks,
   calls,
   activity,
   choose,
@@ -26,6 +28,7 @@ export function FactoryView({
   visualization: Visualization;
   inventory?: Inventory;
   target?: Checkout;
+  tasks: Task[];
   calls: ToolActivity[];
   activity: FileActivity[];
   choose: (id: string) => void;
@@ -38,6 +41,7 @@ export function FactoryView({
   const [paused, setPaused] = useState(false);
   const [feedOpen, setFeedOpen] = useState(true);
   const targets = inventory?.targets ?? [];
+  const active = activeWorktrees(targets, tasks);
   return (
     <section
       className="factory-view"
@@ -93,7 +97,7 @@ export function FactoryView({
             </button>
           </div>
         </div>
-        {targets.length ? (
+        {active.length ? (
           <Suspense
             fallback={
               <div className="factory-scene-loading">Loading scene...</div>
@@ -101,7 +105,8 @@ export function FactoryView({
           >
             <FactoryScene
               visualization={visualization}
-              targets={targets}
+              seed={inventory!.project.id}
+              targets={active}
               calls={calls}
               selected={target?.id}
               choose={choose}
@@ -110,11 +115,14 @@ export function FactoryView({
           </Suspense>
         ) : (
           <div className="factory-scene-loading">
-            {loading ? "Finding worktrees..." : "No checkouts available."}
+            {loading
+              ? "Finding active worktrees..."
+              : "No active worktrees. Start an agent to open the line."}
           </div>
         )}
         {feedOpen && (
           <SceneFeed
+            seed={inventory?.project.id}
             targets={targets}
             calls={calls}
             activity={activity}
