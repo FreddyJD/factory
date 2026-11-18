@@ -144,6 +144,13 @@ async fn factory_api(
                 .await
         }
         "issue_create" => Ok(json!(factory.create_issue(&args).await?)),
+        "issue_remove" => {
+            if args["confirm"] != true {
+                return Err("Explicit issue removal confirmation required".into());
+            }
+            factory.remove_issue(text("taskId")?).await?;
+            Ok(json!(true))
+        }
         "local_reviews" => {
             let project = factory.repositories.project(text("projectId")?).await?;
             let tasks = workspace::tasks(&factory.root)?;

@@ -6,10 +6,12 @@ export function IssueList({
   tasks,
   onSelect,
   onNew,
+  onRemove,
 }: {
   tasks: Task[];
   onSelect: (id: string) => void;
   onNew: () => void;
+  onRemove: (task: Task) => void;
 }) {
   const [query, setQuery] = useState("");
   return (
@@ -37,26 +39,35 @@ export function IssueList({
         {tasks
           .filter((t) => t.title.toLowerCase().includes(query.toLowerCase()))
           .map((task) => (
-            <button
-              className="issue-row"
-              key={task.id}
-              onClick={() => onSelect(task.id)}
-            >
-              <span className={`issue-indicator ${task.status}`}>
-                <Icon name="issue" size={18} />
-              </span>
-              <span className="issue-row-main">
-                <strong>{task.title.split("\n")[0]}</strong>
-                <small>
-                  #{task.id.slice(0, 7)} · {task.model} ·{" "}
-                  {task.checkouts.length}{" "}
-                  {task.checkouts.length === 1 ? "worktree" : "worktrees"}
-                </small>
-              </span>
-              <span className={`status-label ${task.status}`}>
-                {statusLabel(task.status)}
-              </span>
-            </button>
+            <div className="issue-row" key={task.id}>
+              <button
+                className="issue-row-open"
+                onClick={() => onSelect(task.id)}
+              >
+                <span className={`issue-indicator ${task.status}`}>
+                  <Icon name="issue" size={18} />
+                </span>
+                <span className="issue-row-main">
+                  <strong>{task.title.split("\n")[0]}</strong>
+                  <small>
+                    #{task.id.slice(0, 7)} · {task.model} ·{" "}
+                    {task.checkouts.length}{" "}
+                    {task.checkouts.length === 1 ? "worktree" : "worktrees"}
+                  </small>
+                </span>
+                <span className={`status-label ${task.status}`}>
+                  {statusLabel(task.status)}
+                </span>
+              </button>
+              <button
+                className="btn btn-default btn-sm issue-remove"
+                aria-label={`Remove issue #${task.id.slice(0, 7)}`}
+                title={`Remove ${task.title.split("\n")[0]}`}
+                onClick={() => onRemove(task)}
+              >
+                Remove
+              </button>
+            </div>
           ))}
         {!tasks.length && (
           <div className="blankslate">
