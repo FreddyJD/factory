@@ -36,12 +36,16 @@ export function PullRequestsView({
   const [approved, setApproved] = useState("");
   const locked = useRef(false);
   const list = useResource<PullRequest[]>(
-    local.value?.github ? project.id : null,
+    local.value?.github
+      ? `${project.id}:${project.githubAccountId ?? "default"}`
+      : null,
     () => api("pr_list", { projectId: project.id }),
     15000,
   );
   const detail = useResource<PullDetail>(
-    local.value?.github && selected ? `${project.id}:${selected}` : null,
+    local.value?.github && selected
+      ? `${project.id}:${selected}:${project.githubAccountId ?? "default"}`
+      : null,
     () => api("pr_view", { projectId: project.id, number: selected }),
   );
   useEffect(() => {

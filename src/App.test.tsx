@@ -162,6 +162,8 @@ function handler(
       return { issues: [], github: true };
     case "providers":
       return [];
+    case "github_accounts":
+      return [];
     case "pr_list":
       return [pr];
     case "pr_view":
