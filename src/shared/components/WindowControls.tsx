@@ -5,6 +5,8 @@ export function WindowControls() {
   const [error, setError] = useState("");
   const mac = /Mac/.test(navigator.platform);
   if (!isTauri()) return null;
+  // macOS draws the real traffic lights; reserve header space for them.
+  if (mac) return <span className="native-mac-controls" aria-hidden="true" />;
   function run(action: "minimize" | "toggleMaximize" | "close") {
     void getCurrentWindow()
       [action]()
@@ -12,7 +14,7 @@ export function WindowControls() {
   }
   return (
     <div
-      className={`window-controls ${mac ? "mac-controls" : "standard-controls"}`}
+      className="window-controls standard-controls"
       aria-label="Window controls"
     >
       <button
