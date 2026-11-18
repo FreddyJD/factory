@@ -23,7 +23,6 @@ export function NewIssue({
   const [model, setModel] = useState(
     localStorage.getItem("factory-model") ?? "",
   );
-  const [edits, setEdits] = useState(true);
   const [autoPr, setAutoPr] = useState(false);
   const [validation, setValidation] = useState("");
   const [busy, setBusy] = useState(false);
@@ -60,7 +59,7 @@ export function NewIssue({
         title: title.trim(),
         body,
         model: selected,
-        nativeEdits: edits,
+        nativeEdits: true,
         autoPr,
         validation,
         githubTarget: github.value ?? null,
@@ -141,16 +140,10 @@ export function NewIssue({
           </div>
         )}
         <div className="issue-options">
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={edits}
-              onChange={(e) => setEdits(e.target.checked)}
-            />
-            Allow native file edits in this issue's worktree
-          </label>
           <p className="muted">
-            Shell commands and external tools still require approval.
+            All tool calls run automatically without approval prompts, including
+            file edits, shell commands and connected external tools. Commands
+            and external tools run with your account's permissions.
           </p>
           <label>
             Validation command

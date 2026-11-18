@@ -177,17 +177,7 @@ export async function previewApi(
             ],
           },
         ],
-        permissions: [
-          {
-            id: "permission",
-            permission: "bash",
-            patterns: ["cargo test health"],
-            metadata: {
-              command: "cargo test health",
-              workdir: "/worktrees/health",
-            },
-          },
-        ],
+        permissions: [],
         questions: [],
         status: { type: "busy" },
       };
