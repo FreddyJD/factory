@@ -9,13 +9,18 @@ import type { useAppUpdates } from "../hooks/useAppUpdates";
 import type { Project } from "../../../shared/types";
 import { McpSettings } from "../../connections/components/McpSettings";
 import { Icon } from "../../../shared/components/Icon";
+import type { Visualization } from "../../../shared/visualization";
 export function SettingsView({
+  visualization,
+  onVisualization,
   clientId,
   onRefresh,
   updates,
   project,
   tasks,
 }: {
+  visualization: Visualization;
+  onVisualization: (value: Visualization) => void;
   clientId: string | null;
   onRefresh: () => void;
   updates: ReturnType<typeof useAppUpdates>;
@@ -86,6 +91,46 @@ export function SettingsView({
         />
       ) : (
         <>
+          <div className="panel visualization-settings">
+            <div className="panel-heading">Visualization</div>
+            <div className="panel-body">
+              <p>
+                Choose the little world behind the worktree visualization
+                button.
+              </p>
+              <fieldset className="visualization-options">
+                <legend className="sr-only">Visualization theme</legend>
+                {(["factory", "kitchen"] as const).map((theme) => (
+                  <label key={theme} data-selected={visualization === theme}>
+                    <input
+                      type="radio"
+                      name="visualization"
+                      value={theme}
+                      checked={visualization === theme}
+                      onChange={() => onVisualization(theme)}
+                    />
+                    <Icon
+                      name={theme === "kitchen" ? "chef" : "factory"}
+                      size={25}
+                    />
+                    <span>
+                      <strong>
+                        {theme === "kitchen" ? "Kitchen" : "Factory"}
+                      </strong>
+                      <small>
+                        {theme === "kitchen"
+                          ? "Tiny chefs. Freshly cooked code."
+                          : "Little buildings. Busy conveyor belts."}
+                      </small>
+                    </span>
+                  </label>
+                ))}
+              </fieldset>
+              <p className="muted visualization-settings-note">
+                Saved on this device. Changes the scenery, not your agents.
+              </p>
+            </div>
+          </div>
           <div className="panel">
             <div className="panel-heading">GitHub Copilot</div>
             <div className="panel-body">

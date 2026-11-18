@@ -7,11 +7,12 @@ export function useRepository(
   project: Project,
   browseEnabled = true,
   activity: FileActivity[] = [],
+  inventoryEnabled = browseEnabled,
 ) {
   const inventory = useResource<Inventory>(
     project.id,
     () => api("repository_inventory", { projectId: project.id }),
-    browseEnabled ? 30_000 : 0,
+    inventoryEnabled ? 30_000 : 0,
   );
   const [choice, setChoice] = useState("");
   const [path, setPath] = useState("");

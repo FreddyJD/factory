@@ -10,8 +10,12 @@ import { RepositoryPage } from "./features/repository/components/RepositoryPage"
 import { SettingsView } from "./features/settings/components/SettingsView";
 import { useAppUpdates } from "./features/settings/hooks/useAppUpdates";
 import { useFileActivity } from "./features/repository/hooks/useFileActivity";
+import { savedVisualization, type Visualization } from "./shared/visualization";
 
 export function App() {
+  const [visualization, setVisualization] =
+    useState<Visualization>(savedVisualization);
+  const [visualizing, setVisualizing] = useState(false);
   const activity = useFileActivity();
   const projects = useProjects();
   const [section, setSection] = useState<"repository" | "settings">(
@@ -46,7 +50,10 @@ export function App() {
     }
   }
   function choose(id: string) {
-    if (id !== projects.project?.id) setTab("code");
+    if (id !== projects.project?.id) {
+      setTab("code");
+      setVisualizing(false);
+    }
     projects.select(id);
     setSection("repository");
   }
@@ -101,6 +108,9 @@ export function App() {
           projects.project ? (
             <RepositoryPage
               key={projects.project.id}
+              visualization={visualization}
+              factory={visualizing}
+              setFactory={setVisualizing}
               project={projects.project}
               activity={activity}
               tasks={projectTasks}
@@ -133,6 +143,15 @@ export function App() {
           <main className="utility-content">
             <SettingsView
               clientId={projects.status.value?.githubClientId ?? null}
+              visualization={visualization}
+              onVisualization={(value) => {
+                try {
+                  localStorage.setItem("factory-visualization", value);
+                  setVisualization(value);
+                } catch {
+                  setError("Could not save your visualization preference.");
+                }
+              }}
               onRefresh={projects.status.refresh}
               updates={updates}
               project={projects.project}
