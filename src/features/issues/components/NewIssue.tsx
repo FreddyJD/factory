@@ -10,11 +10,13 @@ import { useResource } from "../../../shared/hooks/useResource";
 import { ImageAttachments, useIssueImages } from "./ImageAttachments";
 export function NewIssue({
   project,
+  github: remote,
   onCreated,
   onCancel,
   onSettings,
 }: {
   project: Project;
+  github: boolean | undefined;
   onCreated: (task: Task) => void;
   onCancel: () => void;
   onSettings: () => void;
@@ -27,6 +29,7 @@ export function NewIssue({
   const [autoPr] = useState(
     () => localStorage.getItem("factory-auto-pr") !== "false",
   );
+  const publish = remote === true && autoPr;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const locked = useRef(false);
@@ -48,7 +51,7 @@ export function NewIssue({
     attachments.images.length > 0 &&
     available.find((m) => m.id === selected)?.capabilities?.vision === false;
   const github = useResource<Record<string, unknown>>(
-    autoPr ? `github:${project.id}` : null,
+    publish ? `github:${project.id}` : null,
     () => api("github_status", { projectId: project.id }),
   );
   async function submit(event: React.FormEvent) {
@@ -57,7 +60,8 @@ export function NewIssue({
       locked.current ||
       attachments.reading ||
       imageUnsupported ||
-      (autoPr && (!github.value || !!github.error || github.loading)) ||
+      (autoPr && remote === undefined) ||
+      (publish && (!github.value || !!github.error || github.loading)) ||
       (!body.trim() && !attachments.images.length) ||
       !selected
     )
@@ -73,7 +77,7 @@ export function NewIssue({
         images: attachments.images,
         model: selected,
         nativeEdits: true,
-        autoPr,
+        autoPr: publish,
         githubTarget: github.value ?? null,
       });
       if (alive.current) onCreated(task);
@@ -158,10 +162,13 @@ export function NewIssue({
             file edits, shell commands and connected external tools. Commands
             and external tools run with your account's permissions.
           </p>
-          {autoPr && github.loading && (
+          {autoPr && remote === undefined && (
+            <p className="muted">Checking repository…</p>
+          )}
+          {publish && github.loading && (
             <p className="muted">Checking GitHub access…</p>
           )}
-          {autoPr && github.error && (
+          {publish && github.error && (
             <div className="alert alert-warning">
               {github.error} Disable automatic draft pull requests in{" "}
               <button
@@ -188,8 +195,9 @@ export function NewIssue({
               !selected ||
               attachments.reading ||
               imageUnsupported ||
+              (autoPr && remote === undefined) ||
               (!body.trim() && !attachments.images.length) ||
-              (autoPr && (!github.value || !!github.error || github.loading))
+              (publish && (!github.value || !!github.error || github.loading))
             }
           >
             {busy ? "Creating issue…" : "Create issue and run"}

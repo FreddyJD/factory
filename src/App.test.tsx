@@ -842,6 +842,175 @@ describe("repository-first application", () => {
     fireEvent.click(within(nav).getByRole("button", { name: "Code" }));
     expect(screen.queryByRole("button", { name: "Allow once" })).toBeNull();
   });
+  it.each([true, false])(
+    "shows only the matching issue actions when GitHub mode is %s",
+    async (github) => {
+      invoke.mockImplementation((command, params) =>
+        params.action === "local_reviews"
+          ? { issues: [], github }
+          : handler(command, params),
+      );
+      render(<App />);
+      const nav = await screen.findByRole("navigation", { name: "Repository" });
+      fireEvent.click(within(nav).getByRole("button", { name: /Issues/ }));
+      fireEvent.click(
+        await screen.findByRole("button", { name: /Add health endpoint/ }),
+      );
+      await screen.findByRole("button", {
+        name: github ? "Create draft PR" : "Review and merge locally",
+      });
+      expect(
+        screen.queryByRole("button", {
+          name: github ? "Review and merge locally" : "Create draft PR",
+        }),
+      ).toBeNull();
+    },
+  );
+  it.each([true, false])(
+    "applies automatic PR publication only when GitHub mode is %s",
+    async (github) => {
+      invoke.mockImplementation((command, params) =>
+        params.action === "local_reviews"
+          ? { issues: [], github }
+          : handler(command, params),
+      );
+      render(<App />);
+      fireEvent.click(await screen.findByRole("button", { name: "New issue" }));
+      await screen.findByRole("option", { name: "Fixture model" });
+      expect(screen.queryByRole("checkbox")).toBeNull();
+      expect(screen.queryByLabelText("Validation command")).toBeNull();
+      fireEvent.change(screen.getByLabelText("Description"), {
+        target: { value: "Make a repository change" },
+      });
+      const create = screen.getByRole("button", {
+        name: "Create issue and run",
+      });
+      await waitFor(() =>
+        expect((create as HTMLButtonElement).disabled).toBe(false),
+      );
+      fireEvent.click(create);
+      await waitFor(() =>
+        expect(
+          invoke.mock.calls.find((c) => c[1].action === "issue_create")?.[1]
+            .args,
+        ).toMatchObject({ autoPr: github }),
+      );
+      expect(
+        invoke.mock.calls.some((c) => c[1].action === "github_status"),
+      ).toBe(github);
+    },
+  );
+  it("waits for repository detection before applying the default PR preference", async () => {
+    let finish!: (value: unknown) => void;
+    invoke.mockImplementation((command, params) =>
+      params.action === "local_reviews"
+        ? new Promise((resolve) => {
+            finish = resolve;
+          })
+        : handler(command, params),
+    );
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "New issue" }));
+    await screen.findByRole("option", { name: "Fixture model" });
+    const description = screen.getByLabelText("Description");
+    fireEvent.change(description, {
+      target: { value: "Make a repository change" },
+    });
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Create issue and run",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    fireEvent.submit(description.closest("form")!);
+    expect(invoke.mock.calls.some((c) => c[1].action === "issue_create")).toBe(
+      false,
+    );
+    await act(async () => finish({ issues: [], github: true }));
+    await waitFor(() =>
+      expect(
+        (
+          screen.getByRole("button", {
+            name: "Create issue and run",
+          }) as HTMLButtonElement
+        ).disabled,
+      ).toBe(false),
+    );
+    fireEvent.submit(description.closest("form")!);
+    await waitFor(() =>
+      expect(
+        invoke.mock.calls.find((c) => c[1].action === "issue_create")?.[1].args,
+      ).toMatchObject({ autoPr: true }),
+    );
+  });
+  it("shows only GitHub pull requests for a remote repository", async () => {
+    invoke.mockImplementation((command, params) =>
+      params.action === "local_reviews"
+        ? {
+            issues: [
+              {
+                taskId: task.id,
+                title: "Local-only review",
+                outcome: "completed",
+                localMerge: null,
+              },
+            ],
+            github: true,
+          }
+        : handler(command, params),
+    );
+    render(<App />);
+    const nav = await screen.findByRole("navigation", { name: "Repository" });
+    fireEvent.click(within(nav).getByRole("button", { name: "Pull requests" }));
+    await screen.findByRole("button", { name: /Fix retries/ });
+    expect(screen.queryByText("Local changes")).toBeNull();
+    expect(screen.queryByText("No remote required")).toBeNull();
+    expect(screen.queryByText("Local-only review")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Fix retries/ }));
+    await screen.findByRole("button", { name: "Approve pull request" });
+    expect(screen.queryByText("Local changes")).toBeNull();
+    expect(invoke.mock.calls.some((c) => c[1].action === "local_preview")).toBe(
+      false,
+    );
+  });
+  it("waits for repository detection before showing either review workflow", async () => {
+    let finish!: (value: unknown) => void;
+    invoke.mockImplementation((command, params) =>
+      params.action === "local_reviews"
+        ? new Promise((resolve) => {
+            finish = resolve;
+          })
+        : handler(command, params),
+    );
+    render(<App />);
+    const nav = await screen.findByRole("navigation", { name: "Repository" });
+    fireEvent.click(within(nav).getByRole("button", { name: "Pull requests" }));
+    await screen.findByText("Loading repository reviews...");
+    expect(screen.queryByText("Local changes")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Pull requests" })).toBeNull();
+    expect(invoke.mock.calls.some((c) => c[1].action === "pr_list")).toBe(
+      false,
+    );
+    await act(async () => finish({ issues: [], github: true }));
+    await screen.findByRole("button", { name: /Fix retries/ });
+    expect(screen.queryByText("Local changes")).toBeNull();
+  });
+  it("keeps remote failures in the remote review workflow", async () => {
+    invoke.mockImplementation((command, params) =>
+      params.action === "pr_list"
+        ? Promise.reject(new Error("GitHub authentication required"))
+        : handler(command, params),
+    );
+    render(<App />);
+    const nav = await screen.findByRole("navigation", { name: "Repository" });
+    fireEvent.click(within(nav).getByRole("button", { name: "Pull requests" }));
+    await screen.findByRole("alert");
+    expect(screen.getByText(/GitHub authentication required/)).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Pull requests" })).toBeTruthy();
+    expect(screen.queryByText("Local changes")).toBeNull();
+    expect(screen.queryByText("No remote required")).toBeNull();
+  });
   it("shows local reviews without origin or a GitHub error", async () => {
     const issue = {
       taskId: task.id,
@@ -876,6 +1045,8 @@ describe("repository-first application", () => {
       await screen.findByRole("button", { name: /Local change/ }),
     );
     await screen.findByText("+local content");
+    expect(screen.queryByRole("heading", { name: "Pull requests" })).toBeNull();
+    expect(screen.queryByText("GitHub", { exact: true })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Merge locally" }));
     await screen.findByRole("button", { name: "Confirm local merge" });
     expect(invoke.mock.calls.some((c) => c[1].action === "pr_list")).toBe(

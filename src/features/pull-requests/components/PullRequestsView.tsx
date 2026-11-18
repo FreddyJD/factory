@@ -8,16 +8,18 @@ import type { Issue } from "../../../shared/types";
 import { Markdown } from "../../../shared/components/Markdown";
 export function PullRequestsView({
   project,
+  local,
   onChange,
 }: {
   project: Project;
+  local: {
+    value?: { issues: Issue[]; github: boolean };
+    loading: boolean;
+    error?: string;
+    refresh: () => void;
+  };
   onChange: () => void;
 }) {
-  const local = useResource<{ issues: Issue[]; github: boolean }>(
-    `local-reviews:${project.id}`,
-    () => api("local_reviews", { projectId: project.id }),
-    4000,
-  );
   const [selected, setSelected] = useState<number | null>(null);
   const [review, setReview] = useState("");
   const [confirm, setConfirm] = useState<{
@@ -39,7 +41,7 @@ export function PullRequestsView({
     15000,
   );
   const detail = useResource<PullDetail>(
-    selected ? `${project.id}:${selected}` : null,
+    local.value?.github && selected ? `${project.id}:${selected}` : null,
     () => api("pr_view", { projectId: project.id, number: selected }),
   );
   useEffect(() => {
@@ -90,7 +92,10 @@ export function PullRequestsView({
   }
   return (
     <section>
-      {!selected && (
+      {local.loading && !local.value && (
+        <div className="loading-row">Loading repository reviews...</div>
+      )}
+      {local.value && !local.value.github && (
         <LocalReviews
           project={project}
           issues={local.value?.issues ?? []}

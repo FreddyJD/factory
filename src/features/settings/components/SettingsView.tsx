@@ -219,10 +219,10 @@ export function SettingsView({
                 Automatically create a draft pull request
               </label>
               <p className="muted">
-                Applies to new issues. On successful completion, commit and push
-                the issue's assigned branch and open a draft PR using your
-                GitHub CLI account. No separate validation command, force-push
-                or merge.
+                Applies to new issues in GitHub repositories. On successful
+                completion, commit and push the issue's assigned branch and open
+                a draft PR using your GitHub CLI account. No separate validation
+                command, force-push or merge.
               </p>
             </div>
           </div>
