@@ -180,6 +180,7 @@ describe("issue images", () => {
         onCode={vi.fn()}
         onChange={vi.fn()}
         onLocalReview={vi.fn()}
+        onRemove={vi.fn()}
       />,
     );
     expect(screen.getByRole("heading", { level: 1 }).textContent).toContain(

@@ -60,10 +60,12 @@ pub fn list(root: &Path) -> Result<Vec<Issue>> {
     for entry in fs::read_dir(dir).map_err(|e| e.to_string())? {
         let path = entry.map_err(|e| e.to_string())?.path();
         if path.extension().is_some_and(|e| e == "json") {
-            list.push(
+            let issue =
                 serde_json::from_slice::<Issue>(&fs::read(path).map_err(|e| e.to_string())?)
-                    .map_err(|e| e.to_string())?,
-            );
+                    .map_err(|e| e.to_string())?;
+            if !crate::workspace::issue_removed(root, &issue.task_id) {
+                list.push(issue);
+            }
         }
     }
     list.sort_by_key(|a| std::cmp::Reverse(a.created_at));

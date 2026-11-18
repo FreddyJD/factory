@@ -473,7 +473,9 @@ pub fn tasks(root: &Path) -> Result<Vec<Task>> {
         {
             let task = serde_json::from_slice::<Task>(&fs::read(path).map_err(|e| e.to_string())?)
                 .map_err(|e| e.to_string())?;
-            result.push(task);
+            if !issue_removed(root, &task.id) {
+                result.push(task);
+            }
         }
     }
     result.sort_by(|a, b| a.id.cmp(&b.id));
@@ -482,6 +484,9 @@ pub fn tasks(root: &Path) -> Result<Vec<Task>> {
 
 pub fn load_task(root: &Path, id: &str) -> Result<Task> {
     let task = task_record(root, id)?;
+    if issue_removed(root, id) {
+        return Err("Issue has been removed; execution refused".into());
+    }
     if matches!(
         task.status.as_str(),
         "removing" | "removal-failed" | "removed"
@@ -492,6 +497,12 @@ pub fn load_task(root: &Path, id: &str) -> Result<Task> {
     }
     validate_task(root, &task)?;
     Ok(task)
+}
+
+pub fn issue_removed(root: &Path, id: &str) -> bool {
+    root.join("deleted-issues")
+        .join(format!("{id}.json"))
+        .exists()
 }
 
 pub fn task_record(root: &Path, id: &str) -> Result<Task> {

@@ -19,6 +19,7 @@ export function IssueThread({
   onCode,
   onChange,
   onLocalReview,
+  onRemove,
 }: {
   task: Task;
   issue?: Issue;
@@ -26,6 +27,7 @@ export function IssueThread({
   onCode: (path: string) => void;
   onChange: () => void;
   onLocalReview: () => void;
+  onRemove: (task: Task) => void;
 }) {
   const session = useIssue(task.id);
   const [comment, setComment] = useState("");
@@ -63,9 +65,17 @@ export function IssueThread({
   }
   return (
     <section className="issue-thread">
-      <button className="link-button back-link" onClick={onBack}>
-        ← Issues
-      </button>
+      <div className="issue-thread-actions">
+        <button className="link-button back-link" onClick={onBack}>
+          ← Issues
+        </button>
+        <button
+          className="btn btn-default btn-sm issue-remove"
+          onClick={() => onRemove(current)}
+        >
+          Remove issue
+        </button>
+      </div>
       <div className="issue-title">
         <h1>
           {current.title}

@@ -198,6 +198,14 @@ hr {
   padding: 3px 9px;
   font-size: 12px;
 }
+.btn-danger {
+  color: #fff;
+  background: #cf222e;
+  border-color: #a40e26;
+}
+.btn-danger:hover:not(:disabled) {
+  background: #a40e26;
+}
 .btn-xs {
   padding: 1px 6px;
   font-size: 11px;
@@ -991,17 +999,39 @@ input[type="radio"] {
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  text-align: left;
-  padding: 16px;
-  border: 0;
+  padding-right: 16px;
   border-top: 1px solid #d8dee4;
   background: white;
 }
-.issue-row:first-of-type {
+.issue-row-open {
+  display: flex;
+  align-items: flex-start;
+  flex: 1;
+  min-width: 0;
+  gap: 12px;
+  text-align: left;
+  padding: 16px;
+  border: 0;
+  background: transparent;
+}
+.issue-list > .panel-heading + .issue-row {
   border-top: 0;
 }
 .issue-row:hover {
   background: #f6f8fa;
+}
+.issue-remove {
+  color: #cf222e;
+}
+.issue-row > .issue-remove {
+  margin-top: 16px;
+}
+.issue-thread-actions {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
 }
 .issue-indicator {
   color: #1a7f37;
@@ -1610,10 +1640,18 @@ input[type="radio"] {
     flex-wrap: wrap;
   }
   .issue-row {
-    padding: 12px;
+    padding-right: 12px;
     gap: 8px;
   }
-  .issue-row > .status-label {
+  .issue-row-open {
+    padding: 12px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .issue-row > .issue-remove {
+    margin-top: 12px;
+  }
+  .issue-row-open > .status-label {
     font-size: 9px;
     padding: 1px 6px;
   }

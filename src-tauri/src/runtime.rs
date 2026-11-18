@@ -300,7 +300,13 @@ impl Factory {
     }
     pub async fn worker(&self, id: &str) -> Result<Arc<Session>> {
         let mut sessions = self.sessions.lock().await;
+        if workspace::issue_removed(&self.root, id) {
+            return Err("Issue has been removed; execution refused".into());
+        }
         if let Some(session) = sessions.get(id) {
+            if session.closing.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err("Session is closing".into());
+            }
             return Ok(session.clone());
         }
         if sessions.len() >= 4 {
@@ -491,6 +497,10 @@ impl Factory {
         }
         let cancel = CancellationToken::new();
         *session.publication_cancel.lock().await = Some(cancel.clone());
+        if session.closing.load(std::sync::atomic::Ordering::SeqCst) {
+            session.publication_cancel.lock().await.take();
+            return Err("Session is closing".into());
+        }
         session.status("publishing").await?;
         session
             .active
@@ -704,6 +714,9 @@ impl Factory {
         Ok(())
     }
     pub async fn snapshot(&self, id: &str) -> Result<Value> {
+        if workspace::issue_removed(&self.root, id) {
+            return Err("Issue has been removed".into());
+        }
         let existing = self.sessions.lock().await.get(id).cloned();
         let Some(session) = existing else {
             let record = workspace::task_record(&self.root, id)?;
@@ -798,6 +811,74 @@ impl Factory {
                 cancel.cancel();
             }
             session.questions.lock().await.clear();
+        }
+        Ok(())
+    }
+    pub async fn remove_issue(&self, id: &str) -> Result<()> {
+        workspace::task_record(&self.root, id)?;
+        let sessions = self.sessions.lock().await;
+        let session = sessions.get(id).cloned();
+        // An idle task still needs its cross-process lease before removal.
+        let _lease = if session.is_none() {
+            let directory = self.root.join("locks");
+            fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+            let lease = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(directory.join(format!("{id}.lock")))
+                .map_err(|e| e.to_string())?;
+            lease.try_lock_exclusive().map_err(|_| {
+                "Task is owned by another Factory process; stop it there first".to_string()
+            })?;
+            Some(lease)
+        } else {
+            None
+        };
+        if let Some(session) = &session {
+            session
+                .closing
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        drop(sessions);
+        self.cancel(id).await?;
+        let _lifecycle = match &session {
+            Some(session) => Some(session.lifecycle.lock().await),
+            None => None,
+        };
+        if let Some(session) = &session {
+            let turn = session.turn.lock().await.take();
+            if let Some((cancel, mut handle)) = turn {
+                cancel.cancel();
+                if tokio::time::timeout(Duration::from_secs(15), &mut handle)
+                    .await
+                    .is_err()
+                {
+                    *session.turn.lock().await = Some((cancel, handle));
+                    return Err("Run is still stopping. Issue and worktrees are retained; try removing again shortly.".into());
+                }
+            }
+            let connections = std::mem::take(&mut *session.connections.lock().await);
+            for connection in connections.into_values() {
+                connection.shutdown().await;
+            }
+        }
+        // A separate marker cannot be overwritten by late task/history saves.
+        // Ownership records and worktrees remain available for recovery.
+        save(
+            &self.root.join("deleted-issues").join(format!("{id}.json")),
+            &json!({"taskId":id,"removedAt":issues::now()}),
+        )?;
+        let mut sessions = self.sessions.lock().await;
+        if let Some(session) = &session {
+            if sessions
+                .get(id)
+                .is_some_and(|current| Arc::ptr_eq(current, session))
+            {
+                sessions.remove(id);
+            }
+            session.emit(id, "issue-removed", json!({}));
         }
         Ok(())
     }
@@ -971,7 +1052,7 @@ async fn agent(
         );
         tokio::pin!(inference);
         let completion = loop {
-            tokio::select! {result=&mut inference=>{while let Ok(delta)=receiver.try_recv(){session.delta(&message,&delta).await;}break result?;},delta=receiver.recv()=>if let Some(delta)=delta{session.delta(&message,&delta).await;}}
+            tokio::select! {biased; _=cancel.cancelled()=>return Err("Cancelled".into()),result=&mut inference=>{while let Ok(delta)=receiver.try_recv(){session.delta(&message,&delta).await;}break result?;},delta=receiver.recv()=>if let Some(delta)=delta{session.delta(&message,&delta).await;}}
         };
         let assistant = crate::wire::assistant(&completion);
         session.history.lock().await.wire.push(assistant);
@@ -1283,6 +1364,135 @@ pub async fn review(root: &Path, id: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    struct StalledInference(Arc<tokio::sync::Notify>);
+    impl provider::Inference for StalledInference {
+        fn complete<'a>(
+            &'a self,
+            _: &'a str,
+            _: Vec<Value>,
+            _: Vec<Value>,
+            _: &'a str,
+            _: CancellationToken,
+            sender: mpsc::Sender<String>,
+        ) -> futures_util::future::BoxFuture<'a, Result<provider::Completion>> {
+            Box::pin(async move {
+                let _sender = sender;
+                self.0.notify_one();
+                std::future::pending().await
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn removing_an_active_issue_stops_it_without_losing_generated_files() {
+        let root = std::env::temp_dir().join(format!("factory-delete-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("source")).unwrap();
+        fs::create_dir(root.join("data")).unwrap();
+        let root = dunce::canonicalize(root).unwrap();
+        workspace::initialize_empty(&root.join("source")).unwrap();
+        let data = root.join("data");
+        let started = Arc::new(tokio::sync::Notify::new());
+        let factory = Factory::with_provider(
+            data.clone(),
+            Arc::new(Copilot::new(&data)),
+            Arc::new(StalledInference(started.clone())),
+        );
+        let task = factory
+            .prepare(&root.join("source"), "remove me", "fixture")
+            .await
+            .unwrap();
+        issues::save(
+            &data,
+            &Issue {
+                task_id: task.id.clone(),
+                title: task.title.clone(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        fs::write(task.directory.join("generated.txt"), "keep this").unwrap();
+        factory
+            .prompt_with_model(
+                &task.id,
+                "work",
+                Model {
+                    id: "fixture".into(),
+                    name: "Fixture".into(),
+                    context: 32_000,
+                },
+            )
+            .await
+            .unwrap();
+        let actor = factory.worker(&task.id).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), started.notified())
+            .await
+            .unwrap();
+        assert!(actor.busy().await);
+        tokio::time::timeout(Duration::from_secs(5), factory.remove_issue(&task.id))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!actor.busy().await);
+        assert_eq!(actor.task.lock().await.status, "stopped");
+        assert!(factory.sessions.lock().await.is_empty());
+        assert!(factory.summaries().await.unwrap().is_empty());
+        assert!(issues::list(&data).unwrap().is_empty());
+        assert!(factory.worker(&task.id).await.is_err());
+        assert!(factory.snapshot(&task.id).await.is_err());
+        assert_eq!(
+            fs::read_to_string(task.directory.join("generated.txt")).unwrap(),
+            "keep this"
+        );
+        assert!(workspace::task_record(&data, &task.id).is_ok());
+        // Even a stale writer cannot resurrect the issue after a restart.
+        workspace::save_task(&data, &task).unwrap();
+        issues::save(
+            &data,
+            &Issue {
+                task_id: task.id.clone(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        drop(actor);
+        let restarted = Factory::new(data.clone());
+        assert!(restarted.summaries().await.unwrap().is_empty());
+        assert!(issues::list(&data).unwrap().is_empty());
+        assert!(restarted.worker(&task.id).await.is_err());
+        restarted.remove_issue(&task.id).await.unwrap();
+        assert!(restarted.remove_issue("../invalid").await.is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn issue_removal_respects_external_leases_and_allows_cleaned_up_tasks() {
+        let root =
+            std::env::temp_dir().join(format!("factory-delete-idle-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("source")).unwrap();
+        fs::create_dir(root.join("data")).unwrap();
+        let root = dunce::canonicalize(root).unwrap();
+        workspace::initialize_empty(&root.join("source")).unwrap();
+        let data = root.join("data");
+        let factory = Factory::new(data.clone());
+        let other = Factory::new(data.clone());
+        let task = factory
+            .prepare(&root.join("source"), "remove idle", "fixture")
+            .await
+            .unwrap();
+        other.worker(&task.id).await.unwrap();
+        assert!(factory
+            .remove_issue(&task.id)
+            .await
+            .unwrap_err()
+            .contains("another Factory process"));
+        assert!(!workspace::issue_removed(&data, &task.id));
+        other.close(&task.id).await.unwrap();
+        factory.remove_worktrees(&task.id).await.unwrap();
+        factory.remove_issue(&task.id).await.unwrap();
+        assert!(factory.summaries().await.unwrap().is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[tokio::test]
     async fn removed_worktrees_keep_snapshots_but_cannot_reopen_workers() {
         let root = std::env::temp_dir().join(format!("factory-removal-{}", uuid::Uuid::new_v4()));

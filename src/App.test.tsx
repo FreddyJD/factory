@@ -189,6 +189,104 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 describe("repository-first application", () => {
+  it.each([
+    "failed",
+    "review",
+    "removed",
+    "working",
+    "needs-you",
+    "publishing",
+  ])(
+    "removes a %s issue from the list only after confirmation, once",
+    async (status) => {
+      let finish!: () => void;
+      invoke.mockImplementation((command, params) => {
+        if (params.action === "status")
+          return {
+            ...(handler(command, params) as object),
+            tasks: [{ ...task, status }],
+          };
+        if (params.action === "issue_remove")
+          return new Promise((resolve) => {
+            finish = () => resolve(true);
+          });
+        return handler(command, params);
+      });
+      render(<App />);
+      const nav = await screen.findByRole("navigation", { name: "Repository" });
+      fireEvent.click(within(nav).getByRole("button", { name: /Issues/ }));
+      const remove = await screen.findByRole("button", {
+        name: "Remove issue #aaaaaaa",
+      });
+      fireEvent.click(remove);
+      expect(screen.queryByText("Conversation canvas")).toBeNull();
+      expect(
+        screen.getByText(
+          /generated files, branches and recovery history stay on disk/,
+        ),
+      ).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Keep issue" }));
+      expect(
+        invoke.mock.calls.some((c) => c[1].action === "issue_remove"),
+      ).toBe(false);
+      fireEvent.click(remove);
+      const confirm = screen.getByRole("button", {
+        name: "Stop and remove issue",
+      });
+      fireEvent.click(confirm);
+      fireEvent.click(confirm);
+      expect(
+        invoke.mock.calls.filter((c) => c[1].action === "issue_remove"),
+      ).toHaveLength(1);
+      expect(
+        invoke.mock.calls.find((c) => c[1].action === "issue_remove")![1].args,
+      ).toEqual({ taskId: task.id, confirm: true });
+      expect(
+        screen.getByRole("button", { name: /Add health endpoint/ }),
+      ).toBeTruthy();
+      await act(async () => finish());
+      await screen.findByText("No issues");
+      expect(screen.getByText("0 issues")).toBeTruthy();
+      expect(
+        screen.queryByRole("button", { name: /Add health endpoint/ }),
+      ).toBeNull();
+    },
+  );
+
+  it("keeps the active issue visible on removal failure and allows retry from its header", async () => {
+    let attempts = 0;
+    invoke.mockImplementation((command, params) => {
+      if (params.action === "issue_remove") {
+        if (++attempts === 1)
+          return Promise.reject(Error("Run is still stopping"));
+        return true;
+      }
+      return handler(command, params);
+    });
+    render(<App />);
+    const nav = await screen.findByRole("navigation", { name: "Repository" });
+    fireEvent.click(within(nav).getByRole("button", { name: /Issues/ }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Add health endpoint/ }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Remove issue" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Stop and remove issue" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveProperty(
+      "textContent",
+      "Error: Run is still stopping",
+    );
+    expect(screen.getByText("Conversation canvas")).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Stop and remove issue" }),
+    );
+    await screen.findByText("No issues");
+    expect(screen.queryByText("Conversation canvas")).toBeNull();
+  });
+
   it("confirms worktree removal once and retains the issue history", async () => {
     let removed = false;
     let finish!: () => void;
@@ -569,11 +667,13 @@ describe("repository-first application", () => {
   it("creates one issue and immediately submits its description for execution", async () => {
     let finish!: (value: unknown) => void;
     invoke.mockImplementation((command, params) =>
-      params.action === "issue_create"
-        ? new Promise((resolve) => {
-            finish = resolve;
-          })
-        : handler(command, params),
+      params.action === "issue_remove"
+        ? true
+        : params.action === "issue_create"
+          ? new Promise((resolve) => {
+              finish = resolve;
+            })
+          : handler(command, params),
     );
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "New issue" }));
@@ -611,6 +711,14 @@ describe("repository-first application", () => {
     });
     expect(args).not.toHaveProperty("title");
     await act(async () => finish(task));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Remove issue" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Stop and remove issue" }),
+    );
+    await screen.findByText("No issues");
+    expect(screen.queryByText("Conversation canvas")).toBeNull();
   });
   it("reopens the explicitly selected existing project", async () => {
     render(<App />);
