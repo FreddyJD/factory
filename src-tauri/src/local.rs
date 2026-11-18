@@ -275,6 +275,7 @@ mod tests {
             id: "project".into(),
             name: "demo".into(),
             path: workspace.path,
+            github_account_id: None,
         };
         let mut task = task;
         task.status = "review".into();

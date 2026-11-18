@@ -1,4 +1,5 @@
 use crate::{
+    github::Auth,
     repository::{self, store},
     workspace::{Result, Task},
 };
@@ -117,7 +118,7 @@ pub fn github_repo(remote: &str) -> Result<String> {
     }
     Ok(name.into())
 }
-pub async fn gh(path: &Path, args: &[&str], input: Option<&Value>) -> Result<Value> {
+pub async fn gh(auth: &Auth, path: &Path, args: &[&str], input: Option<&Value>) -> Result<Value> {
     let mut args = args.to_vec();
     if args.first() == Some(&"api") {
         args.extend(["--hostname", "github.com"]);
@@ -126,14 +127,18 @@ pub async fn gh(path: &Path, args: &[&str], input: Option<&Value>) -> Result<Val
         .map(serde_json::to_vec)
         .transpose()
         .map_err(|e| e.to_string())?;
-    let result = repository::command(&gh_path()?, path, &args, bytes.as_deref(), 90).await?;
+    let result = auth
+        .command(&gh_path()?, path, &args, bytes.as_deref(), 90, None)
+        .await?;
     serde_json::from_slice(&result).map_err(|e| format!("Invalid GitHub response: {e}"))
 }
-pub async fn identity(path: &Path) -> Result<Value> {
+pub async fn identity(path: &Path, auth: &Auth) -> Result<Value> {
     let remote = repository::git(path, &["remote", "get-url", "origin"]).await?;
     let repo = github_repo(remote.trim())?;
-    let user = gh(path, &["api", "user"], None).await?;
+    let user = gh(auth, path, &["api", "user"], None).await?;
+    auth.verify(&user)?;
     let details = gh(
+        auth,
         path,
         &[
             "repo",
@@ -146,10 +151,10 @@ pub async fn identity(path: &Path) -> Result<Value> {
     )
     .await?;
     Ok(
-        json!({"repository":repo,"account":user["login"],"defaultBranch":details["defaultBranchRef"]["name"],"permission":details["viewerPermission"]}),
+        json!({"repository":repo,"account":user["login"],"accountId":auth.account.as_ref().map(|a| &a.id),"defaultBranch":details["defaultBranchRef"]["name"],"permission":details["viewerPermission"]}),
     )
 }
-pub async fn pulls(path: &Path) -> Result<Value> {
+pub async fn pulls(path: &Path, auth: &Auth) -> Result<Value> {
     let remote = match repository::git(path, &["remote", "get-url", "origin"]).await {
         Ok(remote) => remote,
         Err(_) => return Ok(json!([])),
@@ -158,22 +163,25 @@ pub async fn pulls(path: &Path) -> Result<Value> {
         Ok(repo) => repo,
         Err(_) => return Ok(json!([])),
     };
-    gh(path,&["pr","list","--repo",&repo,"--limit","100","--state","open","--json","number,title,author,headRefName,headRefOid,baseRefName,isDraft,url,createdAt,reviewDecision"],None).await
+    gh(auth,path,&["pr","list","--repo",&repo,"--limit","100","--state","open","--json","number,title,author,headRefName,headRefOid,baseRefName,isDraft,url,createdAt,reviewDecision"],None).await
 }
-pub async fn pull(path: &Path, number: u64) -> Result<Value> {
+pub async fn pull(path: &Path, number: u64, auth: &Auth) -> Result<Value> {
     let remote = repository::git(path, &["remote", "get-url", "origin"]).await?;
     let repo = github_repo(remote.trim())?;
     let number = number.to_string();
-    let data=gh(path,&["pr","view",&number,"--repo",&repo,"--json","number,title,body,author,headRefName,headRefOid,baseRefName,isDraft,url,files,reviews,comments,statusCheckRollup"],None).await?;
-    let diff = repository::command(
-        &gh_path()?,
-        path,
-        &["pr", "diff", &number, "--repo", &repo],
-        None,
-        60,
-    )
-    .await?;
+    let data=gh(auth,path,&["pr","view",&number,"--repo",&repo,"--json","number,title,body,author,headRefName,headRefOid,baseRefName,isDraft,url,files,reviews,comments,statusCheckRollup"],None).await?;
+    let diff = auth
+        .command(
+            &gh_path()?,
+            path,
+            &["pr", "diff", &number, "--repo", &repo],
+            None,
+            60,
+            None,
+        )
+        .await?;
     let current = gh(
+        auth,
         path,
         &["api", &format!("repos/{repo}/pulls/{number}")],
         None,
@@ -182,7 +190,8 @@ pub async fn pull(path: &Path, number: u64) -> Result<Value> {
     if current["head"]["sha"] != data["headRefOid"] {
         return Err("PR head changed while loading the diff; refresh before reviewing".into());
     }
-    let user = gh(path, &["api", "user"], None).await?;
+    let user = gh(auth, path, &["api", "user"], None).await?;
+    auth.verify(&user)?;
     Ok(
         json!({"pull":data,"repository":repo,"account":user["login"],"diff":String::from_utf8_lossy(&diff)}),
     )
@@ -194,10 +203,12 @@ pub async fn approve(
     body: &str,
     expected_repo: &str,
     account: &str,
+    auth: &Auth,
 ) -> Result<Value> {
     let remote = repository::git(path, &["remote", "get-url", "origin"]).await?;
     let repo = github_repo(remote.trim())?;
     let current = gh(
+        auth,
         path,
         &["api", &format!("repos/{repo}/pulls/{number}")],
         None,
@@ -209,7 +220,8 @@ pub async fn approve(
     if current["head"]["sha"] != head {
         return Err("Pull request changed since review. Refresh the diff before approving.".into());
     }
-    let user = gh(path, &["api", "user"], None).await?;
+    let user = gh(auth, path, &["api", "user"], None).await?;
+    auth.verify(&user)?;
     if user["login"] != account {
         return Err("GitHub account changed since review; confirm again".into());
     }
@@ -220,6 +232,7 @@ pub async fn approve(
         );
     }
     gh(
+        auth,
         path,
         &[
             "api",
@@ -285,7 +298,7 @@ async fn index_git(
     )
     .map_err(|e| e.to_string())
 }
-pub async fn candidate(task: &Task) -> Result<Value> {
+pub async fn candidate(task: &Task, auth: &Auth) -> Result<Value> {
     if task.checkouts.len() != 1 {
         return Err("Publish one repository per issue".into());
     }
@@ -302,11 +315,12 @@ pub async fn candidate(task: &Task) -> Result<Value> {
     }
     let remote = repository::git(&checkout.path, &["config", "--get", "remote.origin.url"]).await?;
     let repo = github_repo(remote.trim())?;
-    let info = identity(&checkout.path).await?;
+    let info = identity(&checkout.path, auth).await?;
     let base = info["defaultBranch"]
         .as_str()
         .ok_or("Missing default branch")?;
     let remote_base = gh(
+        auth,
         &checkout.path,
         &["api", &format!("repos/{repo}/git/ref/heads/{base}")],
         None,
@@ -320,7 +334,7 @@ pub async fn candidate(task: &Task) -> Result<Value> {
         return Err("No changes to publish".into());
     }
     Ok(
-        json!({"taskId":task.id,"repository":repo,"account":info["account"],"base":base,"baseOid":checkout.base,"branch":checkout.branch,"head":repository::git(&checkout.path,&["rev-parse","HEAD"]).await?.trim(),"tree":tree,"diff":diff,"added":[]}),
+        json!({"taskId":task.id,"repository":repo,"account":info["account"],"accountId":info["accountId"],"base":base,"baseOid":checkout.base,"branch":checkout.branch,"head":repository::git(&checkout.path,&["rev-parse","HEAD"]).await?.trim(),"tree":tree,"diff":diff,"added":[]}),
     )
 }
 
@@ -360,6 +374,7 @@ pub async fn publish(
     task: &Task,
     expected: &Value,
     cancel: CancellationToken,
+    auth: &Auth,
 ) -> Result<Value> {
     let mut issue = load(root, &task.id)?;
     if issue.outcome != "completed"
@@ -375,9 +390,13 @@ pub async fn publish(
             "Publication already attempted; inspect the recorded result before any retry".into(),
         );
     }
-    let before = candidate(task).await?;
+    if issue.target["accountId"] != json!(auth.account.as_ref().map(|a| &a.id)) {
+        return Err("GitHub account changed since issue authorization; restore its account in Settings or create a new issue".into());
+    }
+    let before = candidate(task, auth).await?;
     if issue.target["repository"] != before["repository"]
         || issue.target["account"] != before["account"]
+        || issue.target["accountId"] != before["accountId"]
         || issue.target["defaultBranch"] != before["base"]
     {
         return Err(
@@ -409,7 +428,7 @@ pub async fn publish(
     }
     let result=async{
         if cancel.is_cancelled(){return Err("Publication cancelled".into());}
-        if candidate(task).await?!=before{return Err("Candidate changed; inspect changes before publishing".into());}
+        if candidate(task, auth).await?!=before{return Err("Candidate changed; inspect changes before publishing".into());}
         issue.publication=json!({"state":"committing","candidate":before});save(root,&issue)?;
         let tree=before["tree"].as_str().ok_or("Missing candidate tree")?;
         let parent=before["head"].as_str().ok_or("Missing candidate parent")?;
@@ -423,16 +442,18 @@ pub async fn publish(
         if cancel.is_cancelled(){return Err("Publication cancelled before push".into());}
         if repository::git(path,&["config","--get-regexp","^url\\..*\\.(insteadof|pushinsteadof)$"]).await.is_ok() || repository::git(path,&["config","--get-all","remote.origin.pushurl"]).await.is_ok(){return Err("Git transport configuration changed during publication; publication refused".into());}
         if repository::git(path,&["remote","get-url","--push","origin"]).await?.trim()!=remote.trim(){return Err("Push destination differs from the authorized origin".into());}
-        if identity(path).await?["account"]!=before["account"]{return Err("GitHub account changed before publication".into());}
+        if identity(path, auth).await?["account"]!=before["account"]{return Err("GitHub account changed before publication".into());}
         issue.publication=json!({"state":"pushing","head":head.trim(),"branch":branch});save(root,&issue)?;
-        hardened_git(path,&["push","--no-verify","--no-follow-tags","--recurse-submodules=no",remote.trim(),&format!("{}:refs/heads/{branch}",head.trim())],90).await?;
-        let verified=repository::git(path,&["ls-remote",remote.trim(),&format!("refs/heads/{branch}")]).await?;if verified.split_whitespace().next()!=Some(head.trim()){return Err("Remote branch does not match the published commit".into());}
+        let transport = auth.transport(remote.trim())?;
+        auth.command(Path::new("git"),path,&["push","--no-verify","--no-follow-tags","--recurse-submodules=no",&transport,&format!("{}:refs/heads/{branch}",head.trim())],None,90,Some(&transport)).await?;
+        let verified=auth.command(Path::new("git"),path,&["ls-remote",&transport,&format!("refs/heads/{branch}")],None,20,Some(&transport)).await?;
+        if String::from_utf8_lossy(&verified).split_whitespace().next()!=Some(head.trim()){return Err("Remote branch does not match the published commit".into());}
         let body=format!("{}\n\nGit Factory issue `{}`.",issue.body,issue.task_id);
         if cancel.is_cancelled(){return Err("Publication cancelled after push; branch retained".into());}
         issue.publication=json!({"state":"creating-pr","head":head.trim(),"branch":branch});save(root,&issue)?;
         let repo=before["repository"].as_str().ok_or("Missing repository")?;let base=before["base"].as_str().ok_or("Missing base branch")?;
-        if identity(path).await?["account"]!=before["account"]{return Err("GitHub account changed after push; inspect the retained branch".into());}
-        let result=gh(path,&["api","--method","POST",&format!("repos/{repo}/pulls"),"--input","-"],Some(&json!({"title":issue.title,"body":body,"head":branch,"base":base,"draft":true}))).await?;
+        if identity(path, auth).await?["account"]!=before["account"]{return Err("GitHub account changed after push; inspect the retained branch".into());}
+        let result=gh(auth,path,&["api","--method","POST",&format!("repos/{repo}/pulls"),"--input","-"],Some(&json!({"title":issue.title,"body":body,"head":branch,"base":base,"draft":true}))).await?;
         Ok(json!({"state":"published","number":result["number"],"url":result["html_url"],"head":head.trim()}))
     }.await;
     match result {
@@ -453,6 +474,37 @@ pub async fn publish(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn changing_selected_account_refuses_publication_before_any_git_operation() {
+        let root = std::env::temp_dir().join(format!("publish-account-{}", uuid::Uuid::new_v4()));
+        let task = Task {
+            id: "a".repeat(32),
+            title: "Change".into(),
+            workspace: root.clone(),
+            directory: root.clone(),
+            checkouts: vec![],
+            status: "review".into(),
+            session_id: None,
+            model: "fixture".into(),
+        };
+        save(
+            &root,
+            &Issue {
+                task_id: task.id.clone(),
+                outcome: "completed".into(),
+                target: json!({"accountId":"42"}),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let auth = crate::github::Accounts::new(&root).resolve(None).unwrap();
+        let error = publish(&root, &task, &Value::Null, CancellationToken::new(), &auth)
+            .await
+            .unwrap_err();
+        assert!(error.contains("account changed"));
+        assert!(load(&root, &task.id).unwrap().publication.is_null());
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn retained_issues_load_without_requiring_or_preserving_validation_commands() {
         let mut record = serde_json::to_value(Issue::default()).unwrap();

@@ -289,7 +289,8 @@ pub struct Factory {
     pub events: broadcast::Sender<Value>,
     pub copilot: Arc<Copilot>,
     pub providers: Arc<Providers>,
-    pub repositories: Repositories,
+    pub repositories: Arc<Repositories>,
+    pub github: Arc<crate::github::Accounts>,
     provider: Provider,
 }
 impl Factory {
@@ -311,7 +312,8 @@ impl Factory {
         let (events, _) = broadcast::channel(1024);
         Self {
             providers,
-            repositories: Repositories::new(&root),
+            repositories: Arc::new(Repositories::new(&root)),
+            github: Arc::new(crate::github::Accounts::new(&root)),
             root,
             sessions: Mutex::new(HashMap::new()),
             admission: Mutex::new(()),
@@ -429,6 +431,8 @@ impl Factory {
     pub async fn create_issue(&self, args: &Value) -> Result<Task> {
         let _admission = self.admission.lock().await;
         let project_id = tools::text(args, "projectId")?;
+        let _github_guard = self.github.gate.read().await;
+        let _github_file = self.github.file_gate(false).await?;
         let project = self.repositories.project(project_id).await?;
         let body = tools::text(args, "body")?;
         let images = images::parse(&args["images"])?;
@@ -447,7 +451,8 @@ impl Factory {
         }
         let auto_pr = args["autoPr"] == true;
         let target = if auto_pr {
-            issues::identity(&project.path).await?
+            let auth = self.github.resolve(project.github_account_id.as_deref())?;
+            issues::identity(&project.path, &auth).await?
         } else {
             Value::Null
         };
@@ -529,8 +534,12 @@ impl Factory {
         }
         let task = session.task.lock().await.clone();
         let mut issue = issues::load(&self.root, id)?;
+        let _github_guard = self.github.gate.read().await;
+        let _github_file = self.github.file_gate(false).await?;
+        let project = self.repositories.project(&issue.project_id).await?;
+        let auth = self.github.resolve(project.github_account_id.as_deref())?;
         if issue.target.is_null() {
-            issue.target = issues::identity(&task.checkouts[0].path).await?;
+            issue.target = issues::identity(&task.checkouts[0].path, &auth).await?;
             issues::save(&self.root, &issue)?;
         }
         let cancel = CancellationToken::new();
@@ -543,7 +552,7 @@ impl Factory {
         session
             .active
             .store(true, std::sync::atomic::Ordering::SeqCst);
-        let result = issues::publish(&self.root, &task, preview, cancel.clone()).await;
+        let result = issues::publish(&self.root, &task, preview, cancel.clone(), &auth).await;
         session.publication_cancel.lock().await.take();
         session
             .active
@@ -675,6 +684,8 @@ impl Factory {
         let cancel = CancellationToken::new();
         let provider = self.provider.clone();
         let actor = session.clone();
+        let github = self.github.clone();
+        let repositories = self.repositories.clone();
         let cancellation = cancel.clone();
         session
             .active
@@ -731,9 +742,19 @@ impl Factory {
                         let task = actor.task.lock().await.clone();
                         let _ = actor.status("publishing").await;
                         let result = async {
-                            let candidate = issues::candidate(&task).await?;
-                            issues::publish(&actor.root, &task, &candidate, cancellation.clone())
-                                .await
+                            let _guard = github.gate.read().await;
+                            let _file = github.file_gate(false).await?;
+                            let project = repositories.project(&issue.project_id).await?;
+                            let auth = github.resolve(project.github_account_id.as_deref())?;
+                            let candidate = issues::candidate(&task, &auth).await?;
+                            issues::publish(
+                                &actor.root,
+                                &task,
+                                &candidate,
+                                cancellation.clone(),
+                                &auth,
+                            )
+                            .await
                         }
                         .await;
                         if let Err(error) = result {

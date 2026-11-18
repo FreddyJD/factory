@@ -208,6 +208,11 @@ export async function previewApi(
       return { all: [], connected: [] };
     case "providers":
       return [];
+    case "github_accounts":
+      return [
+        { id: "1", login: "personal-account" },
+        { id: "2", login: "work-account" },
+      ];
     case "github_status":
       return {
         repository: "FreddyJD/factory",

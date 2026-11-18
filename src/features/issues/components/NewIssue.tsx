@@ -51,7 +51,9 @@ export function NewIssue({
     attachments.images.length > 0 &&
     available.find((m) => m.id === selected)?.capabilities?.vision === false;
   const github = useResource<Record<string, unknown>>(
-    publish ? `github:${project.id}` : null,
+    publish
+      ? `github:${project.id}:${project.githubAccountId ?? "default"}`
+      : null,
     () => api("github_status", { projectId: project.id }),
   );
   async function submit(event: React.FormEvent) {

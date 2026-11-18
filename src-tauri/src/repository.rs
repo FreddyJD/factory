@@ -20,6 +20,8 @@ pub struct Project {
     pub id: String,
     pub name: String,
     pub path: PathBuf,
+    #[serde(default, rename = "githubAccountId")]
+    pub github_account_id: Option<String>,
 }
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,7 +35,7 @@ pub struct Target {
 }
 pub struct Repositories {
     root: PathBuf,
-    projects: Mutex<Vec<Project>>,
+    projects: Mutex<()>,
     targets: Mutex<HashMap<String, (String, PathBuf, PathBuf)>>,
     config_gate: Mutex<()>,
     storage_error: Option<String>,
@@ -45,6 +47,29 @@ pub fn store(path: &Path, value: &impl Serialize) -> Result<()> {
         .write_all(&serde_json::to_vec_pretty(value).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
     output.commit().map_err(|e| e.to_string())
+}
+
+pub async fn file_gate(root: &Path, name: &str, exclusive: bool) -> Result<fs::File> {
+    fs::create_dir_all(root).map_err(|e| e.to_string())?;
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(root.join(name))
+        .map_err(|e| e.to_string())?;
+    for _ in 0..100 {
+        let result = if exclusive {
+            fs2::FileExt::try_lock_exclusive(&lock)
+        } else {
+            fs2::FileExt::try_lock_shared(&lock)
+        };
+        if result.is_ok() {
+            return Ok(lock);
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    Err("Repository account configuration is busy; wait for current operations to finish".into())
 }
 
 pub async fn command(
@@ -63,6 +88,17 @@ pub async fn command_index(
     input: Option<&[u8]>,
     seconds: u64,
     index: Option<&Path>,
+) -> Result<Vec<u8>> {
+    command_env(executable, directory, args, input, seconds, index, &[]).await
+}
+pub async fn command_env(
+    executable: &Path,
+    directory: &Path,
+    args: &[&str],
+    input: Option<&[u8]>,
+    seconds: u64,
+    index: Option<&Path>,
+    environment: &[(&str, Option<&str>)],
 ) -> Result<Vec<u8>> {
     let mut cmd = Command::new(executable);
     cmd.current_dir(directory)
@@ -85,6 +121,7 @@ pub async fn command_index(
         "GIT_INDEX_FILE",
         "GIT_OBJECT_DIRECTORY",
         "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_CONFIG_PARAMETERS",
     ] {
         cmd.env_remove(key);
     }
@@ -103,6 +140,16 @@ pub async fn command_index(
         .env("GIT_CONFIG_VALUE_2", "true")
         .env("GIT_CONFIG_KEY_3", "diff.external")
         .env("GIT_CONFIG_VALUE_3", "");
+    for (key, value) in environment {
+        match value {
+            Some(value) => {
+                cmd.env(key, value);
+            }
+            None => {
+                cmd.env_remove(key);
+            }
+        }
+    }
     cmd.stdin(if input.is_some() {
         Stdio::piped()
     } else {
@@ -237,17 +284,16 @@ async fn checkout_metadata(path: &Path) -> Result<CheckoutMetadata> {
 
 impl Repositories {
     pub fn new(root: &Path) -> Self {
-        let (projects, storage_error) = match fs::read(root.join("projects.json")) {
-            Ok(bytes) => match serde_json::from_slice(&bytes) {
-                Ok(projects) => (projects, None),
-                Err(error) => (vec![], Some(format!("Cannot read saved projects: {error}"))),
-            },
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (vec![], None),
-            Err(error) => (vec![], Some(error.to_string())),
+        let storage_error = match fs::read(root.join("projects.json")) {
+            Ok(bytes) => serde_json::from_slice::<Vec<Project>>(&bytes)
+                .err()
+                .map(|error| format!("Cannot read saved projects: {error}")),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => Some(error.to_string()),
         };
         Self {
             root: root.into(),
-            projects: Mutex::new(projects),
+            projects: Mutex::new(()),
             targets: Mutex::new(HashMap::new()),
             config_gate: Mutex::new(()),
             storage_error,
@@ -256,8 +302,13 @@ impl Repositories {
     pub fn storage_error(&self) -> Option<&str> {
         self.storage_error.as_deref()
     }
-    pub async fn list(&self) -> Vec<Project> {
-        self.projects.lock().await.clone()
+    pub async fn list(&self) -> Result<Vec<Project>> {
+        match fs::read(self.root.join("projects.json")) {
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map_err(|e| format!("Cannot read saved projects: {e}")),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(vec![]),
+            Err(error) => Err(error.to_string()),
+        }
     }
     pub async fn register(&self, path: &Path) -> Result<Vec<Project>> {
         if let Some(error) = &self.storage_error {
@@ -299,29 +350,45 @@ impl Repositories {
                 path,
             ));
         }
-        let mut saved = self.projects.lock().await;
-        let mut projects = saved.clone();
+        let _guard = self.projects.lock().await;
+        let _file = file_gate(&self.root, "projects.lock", true).await?;
+        let mut projects = self.list().await?;
         for (name, path) in discovered {
             if !projects.iter().any(|p| p.path == path) {
                 projects.push(Project {
                     id: uuid::Uuid::new_v4().simple().to_string(),
                     name,
                     path,
+                    github_account_id: None,
                 });
             }
         }
         store(&self.root.join("projects.json"), &projects)?;
-        *saved = projects.clone();
         Ok(projects)
     }
     pub async fn project(&self, id: &str) -> Result<Project> {
-        self.projects
-            .lock()
-            .await
+        self.list()
+            .await?
             .iter()
             .find(|p| p.id == id)
             .cloned()
             .ok_or("Project is not registered".into())
+    }
+    pub async fn set_github_account(&self, id: &str, account: Option<String>) -> Result<Project> {
+        if let Some(error) = &self.storage_error {
+            return Err(error.clone());
+        }
+        let _guard = self.projects.lock().await;
+        let _file = file_gate(&self.root, "projects.lock", true).await?;
+        let mut projects = self.list().await?;
+        let project = projects
+            .iter_mut()
+            .find(|p| p.id == id)
+            .ok_or("Project is not registered")?;
+        project.github_account_id = account;
+        let project = project.clone();
+        store(&self.root.join("projects.json"), &projects)?;
+        Ok(project)
     }
     pub async fn inventory(&self, id: &str) -> Result<Value> {
         let project = self.project(id).await?;
@@ -674,6 +741,62 @@ fn browse(root: &Path, relative: &str) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn account_selection_is_persisted_per_project_and_old_projects_load() {
+        let root = std::env::temp_dir().join(format!("project-accounts-{}", uuid::Uuid::new_v4()));
+        store(
+            &root.join("projects.json"),
+            &json!([
+                {"id":"a","name":"personal","path":"/personal"},
+                {"id":"b","name":"work","path":"/work"}
+            ]),
+        )
+        .unwrap();
+        let projects = Repositories::new(&root);
+        let other_instance = Repositories::new(&root);
+        assert!(projects
+            .project("a")
+            .await
+            .unwrap()
+            .github_account_id
+            .is_none());
+        projects
+            .set_github_account("a", Some("42".into()))
+            .await
+            .unwrap();
+        other_instance
+            .set_github_account("b", Some("43".into()))
+            .await
+            .unwrap();
+        let projects = Repositories::new(&root);
+        assert_eq!(
+            projects
+                .project("a")
+                .await
+                .unwrap()
+                .github_account_id
+                .as_deref(),
+            Some("42")
+        );
+        assert_eq!(
+            projects
+                .project("b")
+                .await
+                .unwrap()
+                .github_account_id
+                .as_deref(),
+            Some("43")
+        );
+        assert!(projects.set_github_account("missing", None).await.is_err());
+        projects.set_github_account("a", None).await.unwrap();
+        assert!(Repositories::new(&root)
+            .project("a")
+            .await
+            .unwrap()
+            .github_account_id
+            .is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
     #[tokio::test]
     async fn stale_repository_identity_and_cross_project_tokens_are_rejected() {
         let root = std::env::temp_dir().join(format!("browser-identity-{}", uuid::Uuid::new_v4()));
