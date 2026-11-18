@@ -42,7 +42,6 @@ export interface Issue {
   createdAt: number;
   nativeEdits: boolean;
   autoPr: boolean;
-  validation: string;
   outcome: string;
   stopReason: string;
   localMerge?: { state: string; commit?: string; error?: string } | null;

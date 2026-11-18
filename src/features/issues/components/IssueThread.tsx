@@ -198,14 +198,10 @@ export function IssueThread({
                   {String(preview.diff)}
                   {JSON.stringify(preview.added, null, 2)}
                 </pre>
-                <p>
-                  Validation command:{" "}
-                  <code>{issue?.validation || "Not configured"}</code>
-                </p>
                 <div className="button-row">
                   <button
                     className="btn btn-success"
-                    disabled={!!busy || !issue?.validation}
+                    disabled={!!busy}
                     onClick={() =>
                       void action("Publishing draft PR", async () => {
                         await api("pr_publish", { taskId: task.id, preview });
@@ -213,7 +209,7 @@ export function IssueThread({
                       })
                     }
                   >
-                    Validate, commit, push and create draft PR
+                    Commit, push and create draft PR
                   </button>
                   <button
                     className="btn btn-default"

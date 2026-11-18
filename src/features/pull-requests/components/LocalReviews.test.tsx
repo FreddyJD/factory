@@ -23,7 +23,6 @@ const issue: Issue = {
   createdAt: 0,
   nativeEdits: true,
   autoPr: false,
-  validation: "",
   outcome: "completed",
   stopReason: "",
   localMerge: null,
@@ -42,7 +41,6 @@ const preview = {
   sourcePath: "/repo",
   worktree: "/worktree",
   mode: "fast-forward",
-  validation: "",
 };
 
 beforeEach(() => {

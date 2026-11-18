@@ -26,9 +26,10 @@ export function NewIssue({
   const [model, setModel] = useState(
     localStorage.getItem("factory-model") ?? "",
   );
-  const [autoPr, setAutoPr] = useState(false);
+  const [autoPr] = useState(
+    () => localStorage.getItem("factory-auto-pr") !== "false",
+  );
   const publish = remote === true && autoPr;
-  const [validation, setValidation] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const locked = useRef(false);
@@ -59,6 +60,8 @@ export function NewIssue({
       locked.current ||
       attachments.reading ||
       imageUnsupported ||
+      (autoPr && remote === undefined) ||
+      (publish && (!github.value || !!github.error || github.loading)) ||
       (!body.trim() && !attachments.images.length) ||
       !selected
     )
@@ -75,7 +78,6 @@ export function NewIssue({
         model: selected,
         nativeEdits: true,
         autoPr: publish,
-        validation,
         githubTarget: github.value ?? null,
       });
       if (alive.current) onCreated(task);
@@ -160,31 +162,23 @@ export function NewIssue({
             file edits, shell commands and connected external tools. Commands
             and external tools run with your account's permissions.
           </p>
-          <label>
-            Validation command
-            <input
-              className="form-control"
-              value={validation}
-              onChange={(e) => setValidation(e.target.value)}
-              placeholder="npm test"
-            />
-          </label>
-          {remote === true && (
-            <label className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={autoPr}
-                onChange={(e) => setAutoPr(e.target.checked)}
-              />
-              Automatically create a draft pull request after validation
-            </label>
+          {autoPr && remote === undefined && (
+            <p className="muted">Checking repository…</p>
           )}
-          {publish && (
+          {publish && github.loading && (
+            <p className="muted">Checking GitHub access…</p>
+          )}
+          {publish && github.error && (
             <div className="alert alert-warning">
-              {github.error ??
-                (github.loading
-                  ? "Checking GitHub access…"
-                  : `Authorize commit and push of this issue's assigned branch to ${github.value?.repository ?? ""}, targeting ${github.value?.defaultBranch ?? ""}, and one draft PR as ${github.value?.account ?? ""}. The validation command above runs with your account's permissions. No force-push or merge.`)}
+              {github.error} Disable automatic draft pull requests in{" "}
+              <button
+                className="link-button"
+                type="button"
+                onClick={onSettings}
+              >
+                Settings
+              </button>{" "}
+              to run without GitHub.
             </div>
           )}
         </div>
@@ -201,9 +195,9 @@ export function NewIssue({
               !selected ||
               attachments.reading ||
               imageUnsupported ||
+              (autoPr && remote === undefined) ||
               (!body.trim() && !attachments.images.length) ||
-              (publish &&
-                (!validation.trim() || !github.value || !!github.error))
+              (publish && (!github.value || !!github.error || github.loading))
             }
           >
             {busy ? "Creating issue…" : "Create issue and run"}

@@ -440,12 +440,6 @@ impl Factory {
             );
         }
         let auto_pr = args["autoPr"] == true;
-        let validation = args["validation"].as_str().unwrap_or("").trim().to_string();
-        if auto_pr && validation.is_empty() {
-            return Err(
-                "Automatic draft PRs require an explicitly authorized validation command".into(),
-            );
-        }
         let target = if auto_pr {
             issues::identity(&project.path).await?
         } else {
@@ -475,7 +469,6 @@ impl Factory {
             created_at: issues::now(),
             native_edits: true,
             auto_pr,
-            validation,
             target,
             outcome: "working".into(),
             ..Default::default()

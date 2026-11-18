@@ -1,6 +1,5 @@
 use crate::{
     repository::{self, store},
-    tools,
     workspace::{Result, Task},
 };
 use serde::{Deserialize, Serialize};
@@ -22,7 +21,6 @@ pub struct Issue {
     pub created_at: u64,
     pub native_edits: bool,
     pub auto_pr: bool,
-    pub validation: String,
     pub target: Value,
     pub outcome: String,
     pub stop_reason: String,
@@ -407,24 +405,10 @@ pub async fn publish(
     {
         return Err("Custom push URLs require manual publication".into());
     }
-    if issue.validation.trim().is_empty() {
-        return Err("Configure a validation command before publishing".into());
-    }
-    issue.publication = json!({"state":"validating","candidate":before,"command":issue.validation});
-    save(root, &issue)?;
-    let validation = tools::shell_result(
-        task,
-        &json!({"command":issue.validation,"timeout":120000}),
-        cancel.clone(),
-    )
-    .await;
     let result=async{
-        let output=validation?;
         if cancel.is_cancelled(){return Err("Publication cancelled".into());}
-        if !output.success{return Err(format!("Validation failed (exit {:?}): {}",output.code,output.output));}
-        let output=output.output;
-        if candidate(task).await?!=before{return Err("Validation changed candidate files; inspect changes before publishing".into());}
-        issue.publication=json!({"state":"committing","validation":output});save(root,&issue)?;
+        if candidate(task).await?!=before{return Err("Candidate changed; inspect changes before publishing".into());}
+        issue.publication=json!({"state":"committing","candidate":before});save(root,&issue)?;
         let tree=before["tree"].as_str().ok_or("Missing candidate tree")?;
         let parent=before["head"].as_str().ok_or("Missing candidate parent")?;
         if repository::git(path,&["config","--get","commit.gpgsign"]).await.is_ok_and(|v|v.trim()=="true"){return Err("This repository requires signed commits; publish manually until signed commit-tree is configured".into());}
@@ -435,13 +419,13 @@ pub async fn publish(
         let remote=repository::git(path,&["config","--get","remote.origin.url"]).await?;
         if github_repo(remote.trim())?!=before["repository"].as_str().ok_or("Missing repository")?{return Err("Publication remote changed".into());}
         if cancel.is_cancelled(){return Err("Publication cancelled before push".into());}
-        if repository::git(path,&["config","--get-regexp","^url\\..*\\.(insteadof|pushinsteadof)$"]).await.is_ok() || repository::git(path,&["config","--get-all","remote.origin.pushurl"]).await.is_ok(){return Err("Git transport configuration changed during validation; publication refused".into());}
+        if repository::git(path,&["config","--get-regexp","^url\\..*\\.(insteadof|pushinsteadof)$"]).await.is_ok() || repository::git(path,&["config","--get-all","remote.origin.pushurl"]).await.is_ok(){return Err("Git transport configuration changed during publication; publication refused".into());}
         if repository::git(path,&["remote","get-url","--push","origin"]).await?.trim()!=remote.trim(){return Err("Push destination differs from the authorized origin".into());}
         if identity(path).await?["account"]!=before["account"]{return Err("GitHub account changed before publication".into());}
         issue.publication=json!({"state":"pushing","head":head.trim(),"branch":branch});save(root,&issue)?;
         hardened_git(path,&["push","--no-verify","--no-follow-tags","--recurse-submodules=no",remote.trim(),&format!("{}:refs/heads/{branch}",head.trim())],90).await?;
         let verified=repository::git(path,&["ls-remote",remote.trim(),&format!("refs/heads/{branch}")]).await?;if verified.split_whitespace().next()!=Some(head.trim()){return Err("Remote branch does not match the published commit".into());}
-        let body=format!("{}\n\nGit Factory issue `{}`.\n\nValidation: `{}`\n\n```text\n{}\n```",issue.body,issue.task_id,issue.validation,tools::clip(&output,10_000));
+        let body=format!("{}\n\nGit Factory issue `{}`.",issue.body,issue.task_id);
         if cancel.is_cancelled(){return Err("Publication cancelled after push; branch retained".into());}
         issue.publication=json!({"state":"creating-pr","head":head.trim(),"branch":branch});save(root,&issue)?;
         let repo=before["repository"].as_str().ok_or("Missing repository")?;let base=before["base"].as_str().ok_or("Missing base branch")?;
@@ -467,6 +451,17 @@ pub async fn publish(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn retained_issues_load_without_requiring_or_preserving_validation_commands() {
+        let mut record = serde_json::to_value(Issue::default()).unwrap();
+        assert!(serde_json::from_value::<Issue>(record.clone()).is_ok());
+        record["validation"] = json!("obsolete validation command");
+        let issue: Issue = serde_json::from_value(record).unwrap();
+        assert!(serde_json::to_value(issue)
+            .unwrap()
+            .get("validation")
+            .is_none());
+    }
     #[tokio::test]
     async fn candidate_includes_untracked_content_without_mutating_the_real_index() {
         let path = std::env::temp_dir().join(format!("candidate-{}", uuid::Uuid::new_v4()));
