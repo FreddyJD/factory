@@ -7,7 +7,6 @@ import { Icon } from "./shared/components/Icon";
 import { useProjects } from "./features/projects/hooks/useProjects";
 import { ProjectSidebar } from "./features/projects/components/ProjectSidebar";
 import { RepositoryPage } from "./features/repository/components/RepositoryPage";
-import { McpSettings } from "./features/connections/components/McpSettings";
 import { SettingsView } from "./features/settings/components/SettingsView";
 import { useAppUpdates } from "./features/settings/hooks/useAppUpdates";
 import { useFileActivity } from "./features/repository/hooks/useFileActivity";
@@ -15,7 +14,7 @@ import { useFileActivity } from "./features/repository/hooks/useFileActivity";
 export function App() {
   const activity = useFileActivity();
   const projects = useProjects();
-  const [section, setSection] = useState<"repository" | "mcp" | "settings">(
+  const [section, setSection] = useState<"repository" | "settings">(
     "repository",
   );
   const [tab, setTab] = useState<Tab>("code");
@@ -57,6 +56,31 @@ export function App() {
     : [];
   return (
     <div className="application">
+      <header className="global-header" data-tauri-drag-region>
+        <span className="global-breadcrumb">
+          <Icon name={section === "settings" ? "settings" : "repo"} />
+          {section === "repository"
+            ? (projects.project?.name ?? "factory")
+            : "Settings"}
+        </span>
+        <div className="global-actions">
+          <span className="muted">{version}</span>
+          {preview ? (
+            <span className="label">Read-only preview</span>
+          ) : (
+            !desktop && <span className="label">Browser preview</span>
+          )}
+          <button
+            className="btn btn-default btn-sm"
+            disabled={opening}
+            onClick={() => void open()}
+          >
+            <Icon name="plus" />
+            {opening ? "Opening…" : "Open project"}
+          </button>
+        </div>
+        <WindowControls />
+      </header>
       <ProjectSidebar
         projects={projects.projects}
         selected={projects.project?.id}
@@ -68,41 +92,6 @@ export function App() {
         onOpen={() => void open()}
       />
       <div className="app-content">
-        <header className="global-header" data-tauri-drag-region>
-          <span className="global-breadcrumb">
-            <Icon
-              name={
-                section === "mcp"
-                  ? "mcp"
-                  : section === "settings"
-                    ? "settings"
-                    : "repo"
-              }
-            />
-            {section === "repository"
-              ? (projects.project?.name ?? "Projects")
-              : section === "mcp"
-                ? "MCP"
-                : "Settings"}
-          </span>
-          <div className="global-actions">
-            <span className="muted">{version}</span>
-            {preview ? (
-              <span className="label">Read-only preview</span>
-            ) : (
-              !desktop && <span className="label">Browser preview</span>
-            )}
-            <button
-              className="btn btn-default btn-sm"
-              disabled={opening}
-              onClick={() => void open()}
-            >
-              <Icon name="plus" />
-              {opening ? "Opening…" : "Open project"}
-            </button>
-          </div>
-          <WindowControls />
-        </header>
         {(error || projects.status.error) && (
           <div className="page-alert alert alert-danger" role="alert">
             {error || projects.status.error}
@@ -142,19 +131,13 @@ export function App() {
           )
         ) : (
           <main className="utility-content">
-            {section === "mcp" ? (
-              <McpSettings
-                key={projects.project?.id ?? "none"}
-                project={projects.project}
-                tasks={projectTasks}
-              />
-            ) : (
-              <SettingsView
-                clientId={projects.status.value?.githubClientId ?? null}
-                onRefresh={projects.status.refresh}
-                updates={updates}
-              />
-            )}
+            <SettingsView
+              clientId={projects.status.value?.githubClientId ?? null}
+              onRefresh={projects.status.refresh}
+              updates={updates}
+              project={projects.project}
+              tasks={projectTasks}
+            />
           </main>
         )}
         <footer className="app-footer">

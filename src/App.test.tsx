@@ -189,6 +189,202 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 describe("repository-first application", () => {
+  it("keeps repository controls together without the root title or Local tag", async () => {
+    render(<App />);
+    await screen.findByRole("button", { name: "README.md" });
+    const toolbar = screen.getByRole("toolbar", { name: "Repository actions" });
+    expect(within(toolbar).getByLabelText("Checkout or worktree")).toBeTruthy();
+    expect(within(toolbar).getByLabelText("Filter files")).toBeTruthy();
+    expect(
+      within(toolbar).getByRole("button", { name: "Refresh files" }),
+    ).toBeTruthy();
+    expect(
+      within(toolbar).getByRole("button", { name: "New issue" }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("navigation", { name: "File path" })).toBeNull();
+    expect(screen.queryByText("Local", { exact: true })).toBeNull();
+    const header = screen.getByRole("banner");
+    expect(header.parentElement?.className).toBe("application");
+    expect(within(header).getAllByText("factory")).toHaveLength(1);
+    fireEvent.change(within(toolbar).getByLabelText("Filter files"), {
+      target: { value: "readme" },
+    });
+    expect(screen.queryByRole("button", { name: "src" })).toBeNull();
+    expect(screen.getByRole("button", { name: "README.md" })).toBeTruthy();
+    fireEvent.change(within(toolbar).getByLabelText("Filter files"), {
+      target: { value: "" },
+    });
+    const browseCalls = invoke.mock.calls.filter(
+      (c) => c[1].action === "repository_browse",
+    ).length;
+    const inventoryCalls = invoke.mock.calls.filter(
+      (c) => c[1].action === "repository_inventory",
+    ).length;
+    fireEvent.click(
+      within(toolbar).getByRole("button", { name: "Refresh files" }),
+    );
+    await waitFor(() => {
+      expect(
+        invoke.mock.calls.filter((c) => c[1].action === "repository_browse")
+          .length,
+      ).toBeGreaterThan(browseCalls);
+      expect(
+        invoke.mock.calls.filter((c) => c[1].action === "repository_inventory")
+          .length,
+      ).toBeGreaterThan(inventoryCalls);
+    });
+    fireEvent.click(within(toolbar).getByRole("button", { name: "New issue" }));
+    await screen.findByLabelText("Title");
+  });
+  it("preserves nested breadcrumbs and parent navigation", async () => {
+    invoke.mockImplementation((command, params) => {
+      if (params.action !== "repository_browse")
+        return handler(command, params);
+      const path = params.args.path as string;
+      if (path === "src/lib/health.ts")
+        return {
+          kind: "file",
+          path,
+          content: "export const healthy = true;",
+          size: 28,
+        };
+      const name =
+        path === "src/lib" ? "health.ts" : path === "src" ? "lib" : "src";
+      return {
+        kind: "directory",
+        path,
+        entries: [
+          {
+            name,
+            path: [path, name].filter(Boolean).join("/"),
+            kind: name.endsWith(".ts") ? "file" : "directory",
+            size: 0,
+            modified: null,
+          },
+        ],
+      };
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "src" }));
+    fireEvent.click(await screen.findByRole("button", { name: "lib" }));
+    fireEvent.click(await screen.findByRole("button", { name: "health.ts" }));
+    expect(
+      (await screen.findByLabelText("Contents of src/lib/health.ts"))
+        .textContent,
+    ).toBe("export const healthy = true;");
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "File path" })).getByRole(
+        "button",
+        { name: "src" },
+      ),
+    );
+    await screen.findByRole("button", { name: "lib" });
+    fireEvent.click(screen.getByRole("button", { name: ".." }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("navigation", { name: "File path" }),
+      ).toBeNull(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "src" }));
+    fireEvent.click(
+      within(
+        await screen.findByRole("navigation", { name: "File path" }),
+      ).getByRole("button", { name: "factory" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("navigation", { name: "File path" }),
+      ).toBeNull(),
+    );
+  });
+  it("shows project-scoped MCP under Settings rather than the sidebar", async () => {
+    invoke.mockImplementation((command, params) => {
+      if (params.action === "status")
+        return {
+          ...(handler(command, params) as object),
+          tasks: [
+            task,
+            {
+              ...task,
+              id: "b".repeat(32),
+              title: "Other project issue",
+              workspace: "/api",
+              checkouts: [],
+            },
+          ],
+        };
+      if (params.action === "project_mcp")
+        return { filesystem: { type: "local", command: ["test-server"] } };
+      return handler(command, params);
+    });
+    render(<App />);
+    await screen.findByRole("button", { name: "README.md" });
+    expect(
+      within(
+        screen.getByRole("navigation", { name: "Application" }),
+      ).queryByRole("button", { name: "MCP" }),
+    ).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(
+      within(
+        await screen.findByRole("navigation", { name: "Settings" }),
+      ).getByRole("button", { name: "MCP" }),
+    );
+    const mcp = await screen.findByRole("region", { name: "MCP settings" });
+    await within(mcp).findByText("filesystem");
+    expect(
+      invoke.mock.calls.find((c) => c[1].action === "project_mcp")?.[1].args,
+    ).toEqual({ projectId: "project-a" });
+    expect(within(mcp).getByRole("option", { name: task.title })).toBeTruthy();
+    expect(
+      within(mcp).queryByRole("option", { name: "Other project issue" }),
+    ).toBeNull();
+    fireEvent.change(within(mcp).getByLabelText("Server name"), {
+      target: { value: "unsaved" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "api" }));
+    await screen.findByLabelText("Checkout or worktree");
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "Settings" })).getByRole(
+        "button",
+        { name: "MCP" },
+      ),
+    );
+    expect(
+      ((await screen.findByLabelText("Server name")) as HTMLInputElement).value,
+    ).toBe("");
+    await waitFor(() =>
+      expect(
+        invoke.mock.calls
+          .filter((c) => c[1].action === "project_mcp")
+          .at(-1)?.[1].args,
+      ).toEqual({ projectId: "project-b" }),
+    );
+  });
+  it("keeps MCP settings accessible without an open project", async () => {
+    invoke.mockImplementation((command, params) =>
+      params.action === "status"
+        ? { ...(handler(command, params) as object), projects: [], tasks: [] }
+        : handler(command, params),
+    );
+    render(<App />);
+    await screen.findByRole("heading", { name: "Open a repository" });
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const navigation = await screen.findByRole("navigation", {
+      name: "Settings",
+    });
+    fireEvent.click(within(navigation).getByRole("button", { name: "MCP" }));
+    await screen.findByText("Open a project first.");
+    expect(screen.queryByLabelText("Server name")).toBeNull();
+    expect(invoke.mock.calls.some((c) => c[1].action === "project_mcp")).toBe(
+      false,
+    );
+    fireEvent.click(
+      within(navigation).getByRole("button", { name: "General" }),
+    );
+    await screen.findByRole("button", { name: "Sign in with GitHub" });
+  });
   it("opens Code before authentication and browses a real API-backed file", async () => {
     render(<App />);
     await screen.findByRole("button", { name: "README.md" });
