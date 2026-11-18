@@ -155,7 +155,7 @@ impl Connection {
             if exposed.len() > 64 || !used.insert(exposed.clone()) {
                 return Err("MCP tool name is too long or collides after sanitization".into());
             }
-            definitions.push(json!({"type":"function","function":{"name":exposed,"description":tool.description.as_deref().unwrap_or("External MCP tool; explicit approval required"),"parameters":tool.input_schema}}));
+            definitions.push(json!({"type":"function","function":{"name":exposed,"description":tool.description.as_deref().unwrap_or("External MCP tool; calls run automatically"),"parameters":tool.input_schema}}));
             routes.insert(exposed, original);
         }
         let resources = service

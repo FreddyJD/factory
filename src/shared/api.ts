@@ -43,13 +43,15 @@ export interface Part {
   id: string;
   type: string;
   text?: string;
+  name?: string;
+  dataUrl?: string;
   tool?: string;
   state?: {
     status: string;
     title?: string;
     input?: unknown;
-    output?: string;
-    error?: string;
+    output?: string | null;
+    error?: string | null;
   };
 }
 export interface Snapshot {
@@ -72,7 +74,7 @@ export interface ProviderCatalog {
         id: string;
         name: string;
         protocol?: "chat" | "responses" | "messages";
-        capabilities?: { toolcall?: boolean };
+        capabilities?: { toolcall?: boolean; vision?: boolean | null };
       }
     >;
   }[];
@@ -115,27 +117,72 @@ export function models(catalog: ProviderCatalog) {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export interface TranscriptLine {
-  kind: "user" | "assistant" | "tool" | "error";
+export type TranscriptLine = {
+  id: string;
   text: string;
-}
+  image?: { name: string; dataUrl: string };
+} & (
+  | { kind: "user" | "assistant" | "error" }
+  | {
+      kind: "tool";
+      tool: {
+        name: string;
+        status: string;
+        title?: string;
+        input?: unknown;
+        output?: string | null;
+        error?: string | null;
+      };
+    }
+);
 export function transcript(snapshot: Snapshot | null): TranscriptLine[] {
   if (!snapshot) return [];
   const lines: TranscriptLine[] = [];
   for (const message of snapshot.messages) {
     if (message.info.error)
-      lines.push({ kind: "error", text: JSON.stringify(message.info.error) });
-    for (const part of message.parts) {
+      lines.push({
+        id: `${message.info.id}:error`,
+        kind: "error",
+        text: JSON.stringify(message.info.error),
+      });
+    for (const [index, part] of message.parts.entries()) {
+      const id = `${message.info.id}:${part.id ?? index}`;
+      if (part.type === "image" && part.dataUrl)
+        lines.push({
+          id,
+          kind: "user",
+          text: `[Image: ${part.name ?? "Attached image"}]`,
+          image: { name: part.name ?? "Attached image", dataUrl: part.dataUrl },
+        });
       if (part.type === "text" && part.text)
         lines.push({
+          id,
           kind: message.info.role === "user" ? "user" : "assistant",
           text: part.text,
         });
       if (part.type === "tool") {
         const state = part.state;
+        const name = part.tool ?? "Tool";
+        const status = state?.status ?? "pending";
+        const sections = [name + " / " + status];
+        if (state?.title && state.title !== name) sections.push(state.title);
+        if (state?.input !== undefined)
+          sections.push("Input\n" + JSON.stringify(state.input, null, 2));
+        if (state?.output != null)
+          sections.push("Output\n" + (state.output || "(empty output)"));
+        if (state?.error != null) sections.push("Error\n" + state.error);
         lines.push({
+          id,
           kind: "tool",
-          text: `${part.tool} / ${state?.status ?? "pending"}\n${state?.title ?? ""}${state?.output ? `\n${state.output}` : ""}${state?.error ? `\n${state.error}` : ""}`,
+          text: sections.join("\n\n"),
+          tool: {
+            name,
+            status,
+            title: state?.title,
+            input: state?.input,
+            output: state?.output,
+            error: state?.error,
+          },
         });
       }
     }

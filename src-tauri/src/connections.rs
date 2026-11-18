@@ -240,6 +240,16 @@ impl Providers {
         }
         self.copilot.model(selection).await
     }
+    pub async fn check_images(&self, selection: &str) -> Result<()> {
+        if split(selection).is_some() {
+            // Manually configured endpoints do not expose reliable vision metadata.
+            // Send multipart input unchanged; provider rejection remains visible.
+            self.model(selection).await?;
+            Ok(())
+        } else {
+            self.copilot.check_images(selection).await
+        }
+    }
 }
 pub fn split(selection: &str) -> Option<(&str, &str)> {
     selection.strip_prefix("endpoint:")?.split_once('/')

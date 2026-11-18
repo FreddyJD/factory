@@ -3,11 +3,7 @@ use crate::{
     workspace::{self, Result},
 };
 use serde_json::{json, Value};
-use std::{
-    collections::{HashMap, HashSet},
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{collections::HashSet, path::PathBuf, sync::Arc};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     sync::{broadcast, mpsc, Mutex},
@@ -109,8 +105,6 @@ async fn acp(factory: Arc<Factory>, id: &str) -> Result<()> {
     let mut initialized = false;
     let mut session_id: Option<String> = None;
     let mut prompt: Option<Value> = None;
-    let mut permissions = HashMap::<String, String>::new();
-    let mut number = 0;
     let mut events = factory.events.subscribe();
     let result:Result<()>=async {
         loop {tokio::select!{
@@ -118,7 +112,7 @@ async fn acp(factory: Arc<Factory>, id: &str) -> Result<()> {
                 let Some(Some(message))=incoming.transpose()? else{break;};
                 let request=message.get("id").cloned().unwrap_or(Value::Null);
                 let method=message["method"].as_str().unwrap_or("");let params=&message["params"];
-                if method.is_empty(){if let Some(permission)=permissions.remove(&request.to_string()){let allow=message["result"]["outcome"]["outcome"]=="selected" && message["result"]["outcome"]["optionId"]=="allow-once";let _=factory.permission(id,&permission,allow).await;}continue;}
+                if method.is_empty(){continue;}
                 let response=match method{
                     "initialize" if !initialized=>{initialized=true;Ok(json!({"protocolVersion":1,"agentInfo":identity(),"agentCapabilities":{"mcpCapabilities":{"http":true},"promptCapabilities":{}},"authMethods":[]}))},
                     "session/new" if initialized && session_id.is_none()=>{
@@ -141,7 +135,7 @@ async fn acp(factory: Arc<Factory>, id: &str) -> Result<()> {
                             if invalid{Err("Native ACP supports text and resource_link blocks only".into())}else{match factory.prompt(id,&blocks.join("\n")).await{Ok(())=>{prompt=Some(request.clone());continue;},Err(error)=>Err(error)}}
                         }
                     }
-                    "session/cancel" if session_id.is_some() && params["sessionId"].as_str()==session_id.as_deref()=>{factory.cancel(id).await?;permissions.clear();continue;},
+                    "session/cancel" if session_id.is_some() && params["sessionId"].as_str()==session_id.as_deref()=>{factory.cancel(id).await?;continue;},
                     _=>Err("Method/state is unsupported by the native Factory ACP profile".into()),
                 };
                 if !request.is_null(){outbound.send(match response{Ok(value)=>success(request,value),Err(message)=>error(request,-32602,message)}).await.map_err(|e|e.to_string())?;}
@@ -153,8 +147,7 @@ async fn acp(factory: Arc<Factory>, id: &str) -> Result<()> {
                 match kind{
                     "text"=>{outbound.send(json!({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":session_id,"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":properties["text"]}}}})).await.map_err(|e|e.to_string())?;},
                     "tool"=>{let status=match properties["status"].as_str(){Some("completed")=>"completed",Some("error")=>"failed",_=>"in_progress"};let mut update=json!({"sessionUpdate":if status=="in_progress"{"tool_call"}else{"tool_call_update"},"toolCallId":properties["callId"],"title":properties["name"],"kind":"other","status":status,"rawInput":properties["input"]});if let Some(output)=properties["output"].as_str(){update["content"]=json!([{"type":"content","content":{"type":"text","text":output}}]);}outbound.send(json!({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":session_id,"update":update}})).await.map_err(|e|e.to_string())?;},
-                    "permission"=>{number+=1;let rpc=format!("factory-permission-{number}");permissions.insert(json!(rpc).to_string(),properties["id"].as_str().ok_or("Missing permission ID")?.into());outbound.send(json!({"jsonrpc":"2.0","id":rpc,"method":"session/request_permission","params":{"sessionId":session_id,"toolCall":{"toolCallId":properties["metadata"]["callId"],"title":properties["permission"],"status":"pending","rawInput":properties["metadata"]},"options":[{"optionId":"allow-once","name":"Allow once","kind":"allow_once"},{"optionId":"reject-once","name":"Reject","kind":"reject_once"}]}})).await.map_err(|e|e.to_string())?;},
-                    "finished"=>{permissions.clear();if let Some(request)=prompt.take(){let reason=properties["stopReason"].as_str().unwrap_or("end_turn");let snapshot=factory.snapshot(id).await?;let response=if reason=="error"{error(request,-32603,snapshot["error"].as_str().unwrap_or("Native inference failed"))}else{success(request,json!({"stopReason":reason}))};outbound.send(response).await.map_err(|e|e.to_string())?;}},
+                    "finished"=>{if let Some(request)=prompt.take(){let reason=properties["stopReason"].as_str().unwrap_or("end_turn");let snapshot=factory.snapshot(id).await?;let response=if reason=="error"{error(request,-32603,snapshot["error"].as_str().unwrap_or("Native inference failed"))}else{success(request,json!({"stopReason":reason}))};outbound.send(response).await.map_err(|e|e.to_string())?;}},
                     _=>{}
                 }
             }
@@ -207,8 +200,8 @@ fn tools(execution: bool) -> Vec<Value> {
     ];
     if execution {
         result.extend([
-        tool("factory_start", "Create isolated worktrees and start a Copilot coding task. Code runs with your OS account permissions; edits and shell require explicit approval.", json!({"goal":{"type":"string"},"model":{"type":"string"}}), &["goal","model"], false),
-        tool("factory_snapshot", "Get transcript, tool activity and pending permission/question requests", json!({"taskId":{"type":"string"}}), &["taskId"], false),
+        tool("factory_start", "Create isolated worktrees and start a Copilot coding task. All tool calls run automatically with your OS account permissions, without approval prompts.", json!({"goal":{"type":"string"},"model":{"type":"string"}}), &["goal","model"], false),
+        tool("factory_snapshot", "Get transcript, tool activity and pending question requests", json!({"taskId":{"type":"string"}}), &["taskId"], false),
         tool("factory_prompt", "Send a follow-up to an idle owned coding session", json!({"taskId":{"type":"string"},"text":{"type":"string"}}), &["taskId","text"], false),
         tool("factory_cancel", "Cancel an owned coding task; worktree files are retained", json!({"taskId":{"type":"string"}}), &["taskId"], false),
         tool("factory_close", "Stop and close an owned worker to release an execution slot; all worktree files are retained", json!({"taskId":{"type":"string"}}), &["taskId"], false),

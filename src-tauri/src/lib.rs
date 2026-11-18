@@ -1,4 +1,5 @@
 pub mod connections;
+pub mod images;
 pub mod issues;
 pub mod local;
 pub mod mcp;
@@ -254,7 +255,10 @@ async fn factory_api(
         )),
         "snapshot" => factory.snapshot(text("taskId")?).await,
         "prompt" => {
-            factory.prompt(text("taskId")?, text("text")?).await?;
+            let images = images::parse(&args["images"])?;
+            factory
+                .prompt_with_images(text("taskId")?, text("text")?, &images)
+                .await?;
             Ok(json!(true))
         }
         "cancel" => {
@@ -270,15 +274,6 @@ async fn factory_api(
                 return Err("Explicit clean-worktree removal confirmation required".into());
             }
             Ok(json!(factory.remove_worktrees(text("taskId")?).await?))
-        }
-        "permission" => {
-            factory
-                .permission(
-                    text("taskId")?,
-                    text("requestId")?,
-                    args["allow"].as_bool().ok_or("Missing approval")?,
-                )
-                .await
         }
         "question" => {
             factory

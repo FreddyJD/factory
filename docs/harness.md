@@ -1,29 +1,29 @@
 # Native Rust Harness
 
-Factory owns the complete in-process agent loop: inference requests, streamed tool-call assembly, tool schemas, validation, execution, human approvals, questions, bounded child agents, context budgeting, session persistence, cancellation, and MCP clients.
+Factory owns the complete in-process agent loop: inference requests, streamed tool-call assembly, tool schemas, validation, automatic tool authorization, execution, questions, bounded child agents, context budgeting, session persistence, cancellation, and MCP clients.
 
-There is no OpenCode binary, archive download, checksum installer, Node/Bun agent runtime, localhost agent server, or RPC hop for built-in tools. Git operations use installed Git; approved shell commands and trusted MCP servers may create subprocesses. Application update signatures are separate and remain enabled.
+There is no OpenCode binary, archive download, checksum installer, Node/Bun agent runtime, localhost agent server, or RPC hop for built-in tools. Git operations use installed Git; shell commands and trusted MCP servers may create subprocesses without per-call approval. Application update signatures are separate and remain enabled.
 
 ## Native Tools
 
 OpenCode v1.19.6 (commit f4e363c8295fa90a03dddc451882fffe8fbce357) inspired the tool names/contracts. Implementation is native Rust, not a claim of full behavioral parity.
 
-| Tool                 | Implementation and boundaries                                                                                                                                                                         |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| read                 | UTF-8 regular files, line numbers, bounded directory lists, 2 MB input / 50 KB output. Binary/image attachments not implemented.                                                                      |
-| write                | Explicit full-content approval and atomic per-file replacement.                                                                                                                                       |
-| edit                 | Exact replacement, ambiguity rejection, explicit replaceAll, pre-allocation size checking; no fuzzy matching.                                                                                         |
-| apply_patch          | Rust parser for Begin/End Patch, Add/Delete/Update File, Move to, exact unique hunks and EOF. Plans all changes before approval, rechecks original content. Does not overwrite add/move destinations. |
-| glob                 | ignore/globset directory walking with bounded worktree-only ignore files, no external rg process.                                                                                                     |
-| grep                 | Rust regex, case-sensitive, bounded matching lines; file paths search only that file. No PCRE/lookaround/backreferences.                                                                              |
-| bash                 | User-approved /bin/sh on macOS, PowerShell on Windows; worktree cwd, bounded output/timeout, process-group/job cleanup. The historical tool name does not imply Bash is installed.                    |
-| webfetch             | User-approved public IPv4 HTTPS on port 443, DNS pinning, proxies/redirects disabled, bounded text response. Raw text/HTML, not a full markdown converter; IPv6-only sites unsupported.               |
-| todowrite            | Replaces the persisted task checklist.                                                                                                                                                                |
-| question             | Suspends for ordered structured answers or dismissal in desktop. Not advertised over baseline ACP.                                                                                                    |
-| task                 | User-approved read-only child investigation, eight inference requests maximum, no writing/shell/MCP/nested delegation. Shares the task cancellation and roots.                                        |
-| skill                | Explicit named checkout-local .gitfactory/skills/NAME/SKILL.md; no automatic host skill discovery.                                                                                                    |
-| dynamic MCP tools    | Native rmcp client, namespaced schemas, global collision rejection, explicit per-call approval.                                                                                                       |
-| MCP resource helpers | list_mcp_resources, list_mcp_resource_templates, read_mcp_resource when a server advertises resources; approval required.                                                                             |
+| Tool                 | Implementation and boundaries                                                                                                                                                                                    |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| read                 | UTF-8 regular files, line numbers, bounded directory lists, 2 MB input / 50 KB output. Binary/image attachments not implemented.                                                                                 |
+| write                | Automatic execution and atomic per-file replacement.                                                                                                                                                             |
+| edit                 | Exact replacement, ambiguity rejection, explicit replaceAll, pre-allocation size checking; no fuzzy matching.                                                                                                    |
+| apply_patch          | Rust parser for Begin/End Patch, Add/Delete/Update File, Move to, exact unique hunks and EOF. Plans all changes before automatic execution, rechecks original content. Does not overwrite add/move destinations. |
+| glob                 | ignore/globset directory walking with bounded worktree-only ignore files, no external rg process.                                                                                                                |
+| grep                 | Rust regex, case-sensitive, bounded matching lines; file paths search only that file. No PCRE/lookaround/backreferences.                                                                                         |
+| bash                 | Automatic /bin/sh on macOS, PowerShell on Windows; worktree cwd, bounded output/timeout, process-group/job cleanup. The historical tool name does not imply Bash is installed.                                   |
+| webfetch             | Automatic public IPv4 HTTPS on port 443, DNS pinning, proxies/redirects disabled, bounded text response. Raw text/HTML, not a full markdown converter; IPv6-only sites unsupported.                              |
+| todowrite            | Replaces the persisted task checklist.                                                                                                                                                                           |
+| question             | Suspends for ordered structured answers or dismissal in desktop. Not advertised over baseline ACP.                                                                                                               |
+| task                 | Automatic read-only child investigation, eight inference requests maximum, no writing/shell/MCP/nested delegation. Shares the task cancellation and roots.                                                       |
+| skill                | Explicit named checkout-local .gitfactory/skills/NAME/SKILL.md; no automatic host skill discovery.                                                                                                               |
+| dynamic MCP tools    | Native rmcp client, namespaced schemas, global collision rejection, automatic execution without per-call approval.                                                                                               |
+| MCP resource helpers | list_mcp_resources, list_mcp_resource_templates, read_mcp_resource when a server advertises resources; automatic execution.                                                                                      |
 
 Not implemented or advertised: LSP execution, plugin-supplied JavaScript tools, websearch, code-mode execute, plan_exit, background child agents, model-specific OpenCode prompt families, automatic formatting, image/PDF tools, semantic compaction, or unrestricted child writers. Factory has its own system prompt. Unknown/schema-invalid tools are rejected before execution.
 
@@ -35,7 +35,7 @@ Native searches prune ignored directories before descent, including dependency/b
 
 One native session per task, at most four locally owned sessions, one active turn per task. The scheduler uses process file leases to prevent desktop/CLI double ownership. Session state is updated before UI/ACP events. Close cancels/joins execution before releasing ownership; changing MCP connections requires an idle task and lifecycle gate.
 
-Each inference response must have a successful terminal stream before any tool executes. Calls are assembled by index, validated as complete JSON, checked against the current tool registry, and bounded. Model arguments never decide permission policy. Native edits require a one-time exact-action decision unless the user explicitly preauthorized them for a local issue. Shell/network/MCP calls still require exact approval. The agent cannot publish; an independently authorized host pipeline can validate and publish one draft PR after a normal completed issue.
+Each inference response must have a successful terminal stream before any tool executes. Calls are assembled by index, validated as complete JSON, checked against the current tool registry, and bounded. All available tools are automatically authorized by the host, without permission waiters, approval UI or ACP permission requests. The retained nativeEdits issue field no longer gates execution, including on older issues where it is false. Questions still suspend for user input. The agent cannot publish; an independently authorized host pipeline can validate and publish one draft PR after a normal completed issue.
 
 The loop allows 40 inference requests per turn. Context budgeting includes system/tools and retains complete recent user turns, never splits tool-call/result groups, and explicitly notes older omitted turns. Full display history is retained; no semantic-summary claim is made. An oversized current turn fails instead of silently cutting tool pairs.
 
@@ -43,7 +43,7 @@ Native history is versioned as rust-v1 in app data/sessions. Tool-call batches a
 
 ## Worktree Policy
 
-Built-in filesystem tools resolve against the union of task checkout roots, not original source folders or broad app data. Traversal, Git metadata/aliases, escaping/dangling symlinks, and nonregular file reads are rejected. New destinations validate the existing parent. Content is revalidated after approval. Concurrent malicious filesystem changes still require an OS sandbox to confine; this is not a security sandbox.
+Built-in filesystem tools resolve against the union of task checkout roots, not original source folders or broad app data. Traversal, Git metadata/aliases, escaping/dangling symlinks, and nonregular file reads are rejected. New destinations validate the existing parent. Content is revalidated before applying edits. Concurrent malicious filesystem changes still require an OS sandbox to confine; this is not a security sandbox.
 
 Git filters, hooks and fsmonitor are disabled for Factory's Git operations. Worktree allocation uses no-checkout first, then hardened read-tree so conditional branch filters cannot run during allocation. LFS pointer files remain pointers. Source dirt and unowned worktrees are preserved. Retained old OpenCode task worktrees can start a fresh native session; old upstream conversation context and credentials are not silently imported.
 
@@ -51,7 +51,7 @@ Preparation discovers repository directories natively and resolves each fresh ro
 
 The issue sidebar's explicit Remove worktrees confirmation releases the idle worker, then removes only clean Factory-owned linked checkouts. Native Rust owns validation, leases, journaling and empty-group cleanup; Git performs exact-path removal and unregisters its own metadata. Dirty, untracked, ignored, locked, submodule and assume-unchanged/skip-worktree cases are refused. No force deletion, recursive fallback, broad prune, or branch deletion is performed. Task/session/issue history and branches stay; removed tasks cannot execute. Partial removal is journaled at removals/TASK_ID.json and blocks retries pending manual inspection. Release worker by itself still retains all files. There is no recursive-wipe agent tool.
 
-Approved shell commands and trusted local MCP servers still execute with the user's account privileges, network access and access to shared Git metadata. OS-account permissions are not a model boundary. Use trusted repositories and review exact commands.
+Shell commands and trusted local MCP servers execute automatically with the user's account privileges, network access and access to shared Git metadata. OS-account permissions are not a model boundary. Use only trusted repositories and MCP servers.
 
 ## Provider
 
@@ -67,4 +67,4 @@ OpenAI-compatible endpoints use the same Rust tool loop and SSE decoder, with se
 
 Run npm run check and the locked Rust tests/Clippy. Build factory-cli, then run scripts/protocol-smoke.mjs and scripts/acp-smoke.mjs with a disposable GIT_FACTORY_DATA_DIR. The native-smoke Rust example connects the native MCP client to the native Factory MCP server and calls a tool without auth/inference or external runtime installation.
 
-Provider fixtures validate fragmented UTF-8/SSE, complete tool calls, malformed/incomplete responses and model filtering. A scripted provider test exercises the real Rust loop through permission wait, worktree write, tool-result replay and completion without paid inference. A separate explicit `copilot-inference-smoke` example performs bounded live inference using only an in-memory echo tool. Chat (Gemini) and Responses (GPT-5.3-Codex) tool round trips have been verified against the signed-in account; Messages is validated with synthetic protocol/HTTP fixtures because this account did not advertise a Messages-only route at verification time. These checks are not a guarantee of every model/account policy or editor certification.
+Provider fixtures validate fragmented UTF-8/SSE, complete tool calls, malformed/incomplete responses and model filtering. Scripted provider tests exercise the real Rust loop through automatic file edits, shell, webfetch validation, child investigation, tool-result replay and completion without paid inference, including retained issues with nativeEdits false. Cancellation and structured question waits are tested separately. A separate explicit `copilot-inference-smoke` example performs bounded live inference using only an in-memory echo tool. Chat (Gemini) and Responses (GPT-5.3-Codex) tool round trips have been verified against the signed-in account; Messages is validated with synthetic protocol/HTTP fixtures because this account did not advertise a Messages-only route at verification time. These checks are not a guarantee of every model/account policy or editor certification.

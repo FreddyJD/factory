@@ -7,6 +7,7 @@ import {
 } from "../../../shared/api";
 import type { Project } from "../../../shared/types";
 import { useResource } from "../../../shared/hooks/useResource";
+import { ImageAttachments, useIssueImages } from "./ImageAttachments";
 export function NewIssue({
   project,
   onCreated,
@@ -18,12 +19,11 @@ export function NewIssue({
   onCancel: () => void;
   onSettings: () => void;
 }) {
-  const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
+  const attachments = useIssueImages();
   const [model, setModel] = useState(
     localStorage.getItem("factory-model") ?? "",
   );
-  const [edits, setEdits] = useState(true);
   const [autoPr, setAutoPr] = useState(false);
   const [validation, setValidation] = useState("");
   const [busy, setBusy] = useState(false);
@@ -43,13 +43,23 @@ export function NewIssue({
   const selected = available.some((m) => m.id === model)
     ? model
     : (available[0]?.id ?? "");
+  const imageUnsupported =
+    attachments.images.length > 0 &&
+    available.find((m) => m.id === selected)?.capabilities?.vision === false;
   const github = useResource<Record<string, unknown>>(
     autoPr ? `github:${project.id}` : null,
     () => api("github_status", { projectId: project.id }),
   );
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (locked.current || !title.trim() || !selected) return;
+    if (
+      locked.current ||
+      attachments.reading ||
+      imageUnsupported ||
+      (!body.trim() && !attachments.images.length) ||
+      !selected
+    )
+      return;
     locked.current = true;
     setBusy(true);
     setError("");
@@ -57,10 +67,10 @@ export function NewIssue({
       localStorage.setItem("factory-model", selected);
       const task = await api<Task>("issue_create", {
         projectId: project.id,
-        title: title.trim(),
         body,
+        images: attachments.images,
         model: selected,
-        nativeEdits: edits,
+        nativeEdits: true,
         autoPr,
         validation,
         githubTarget: github.value ?? null,
@@ -84,29 +94,30 @@ export function NewIssue({
       <form onSubmit={(event) => void submit(event)}>
         <div className="panel">
           <div className="panel-body">
-            <label>
-              Title
-              <input
-                autoFocus
-                className="form-control issue-title-input"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                maxLength={200}
-                required
-                placeholder="Title"
-              />
-            </label>
             <div className="editor-tabs">
-              <strong>Write</strong>
+              <strong>Description</strong>
             </div>
             <textarea
+              autoFocus
               className="form-control issue-description"
               aria-label="Description"
               placeholder="Describe the change"
               value={body}
               onChange={(e) => setBody(e.target.value)}
+              onPaste={busy ? undefined : attachments.paste}
+              disabled={busy}
               rows={10}
             />
+            <ImageAttachments attachments={attachments} disabled={busy} />
+            {imageUnsupported && (
+              <p role="alert" className="text-danger">
+                This model does not support images. Choose an image-capable
+                model.
+              </p>
+            )}
+            <p className="muted image-help">
+              The model will choose a title from your description.
+            </p>
           </div>
           <div className="panel-footer">
             <label className="inline-label">
@@ -141,16 +152,10 @@ export function NewIssue({
           </div>
         )}
         <div className="issue-options">
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={edits}
-              onChange={(e) => setEdits(e.target.checked)}
-            />
-            Allow native file edits in this issue's worktree
-          </label>
           <p className="muted">
-            Shell commands and external tools still require approval.
+            All tool calls run automatically without approval prompts, including
+            file edits, shell commands and connected external tools. Commands
+            and external tools run with your account's permissions.
           </p>
           <label>
             Validation command
@@ -189,7 +194,9 @@ export function NewIssue({
             disabled={
               busy ||
               !selected ||
-              !title.trim() ||
+              attachments.reading ||
+              imageUnsupported ||
+              (!body.trim() && !attachments.images.length) ||
               (autoPr &&
                 (!validation.trim() || !github.value || !!github.error))
             }

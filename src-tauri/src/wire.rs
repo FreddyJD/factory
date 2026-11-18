@@ -79,6 +79,36 @@ fn string<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
         .as_str()
         .ok_or_else(|| format!("Provider {key} is missing or invalid"))
 }
+fn user_content(message: &Value, protocol: Protocol) -> Result<Vec<Value>> {
+    let parts = if let Some(text) = message["content"].as_str() {
+        vec![json!({"type":"text","text":text})]
+    } else {
+        message["content"]
+            .as_array()
+            .ok_or("Invalid user content")?
+            .clone()
+    };
+    parts
+        .iter()
+        .map(|part| match part["type"].as_str() {
+            Some("text") => Ok(if protocol == Protocol::Responses {
+                json!({"type":"input_text","text":string(part,"text")?})
+            } else {
+                json!({"type":"text","text":string(part,"text")?})
+            }),
+            Some("image_url") => {
+                let url = string(&part["image_url"], "url")?;
+                let (mime, data) = crate::images::data(url)?;
+                Ok(if protocol == Protocol::Responses {
+                    json!({"type":"input_image","image_url":url})
+                } else {
+                    json!({"type":"image","source":{"type":"base64","media_type":mime,"data":data}})
+                })
+            }
+            _ => Err("Unsupported user content part".into()),
+        })
+        .collect()
+}
 fn object_arguments(value: &str) -> Result<Value> {
     let parsed: Value =
         serde_json::from_str(value).map_err(|_| "Provider tool arguments are not complete JSON")?;
@@ -244,7 +274,7 @@ pub fn body(
             for message in messages {
                 match string(message,"role")?{
                 "system"=>instructions.push(string(message,"content")?.to_string()),
-                "user"=>input.push(json!({"role":"user","content":[{"type":"input_text","text":string(message,"content")?}]})),
+                "user"=>input.push(json!({"role":"user","content":user_content(message, protocol)?})),
                 "assistant"=>if let Some(items)=replay(protocol,model,message)?{input.extend(items.clone());}else{
                     if let Some(text)=message["content"].as_str().filter(|s|!s.is_empty()){input.push(json!({"role":"assistant","content":text}));}
                     for call in canonical_calls(message)?{input.push(json!({"type":"function_call","call_id":call.id,"name":call.name,"arguments":call.arguments}));}
@@ -268,10 +298,7 @@ pub fn body(
                         system.push(json!({"type":"text","text":string(message,"content")?}));
                         continue;
                     }
-                    "user" => (
-                        "user",
-                        vec![json!({"type":"text","text":string(message,"content")?})],
-                    ),
+                    "user" => ("user", user_content(message, protocol)?),
                     "tool" => (
                         "user",
                         vec![
@@ -673,8 +700,23 @@ impl Decoder {
         {
             return Err("Responses item identity changed".into());
         }
-        if previous.closed && previous.value != *final_item {
-            return Err("Responses completed item changed in terminal snapshot".into());
+        // The terminal snapshot owns metadata such as encrypted reasoning and logprobs.
+        // Validate the completed payload, not byte-for-byte equality of the whole item.
+        if previous.closed && previous.value["type"] == "message" {
+            let before = previous.value["content"]
+                .as_array()
+                .ok_or("Missing Responses message content")?;
+            let after = final_item["content"]
+                .as_array()
+                .ok_or("Missing Responses message content")?;
+            if previous.value["role"] != final_item["role"]
+                || before.len() != after.len()
+                || before.iter().zip(after).any(|(a, b)| {
+                    a["type"] != b["type"] || a["text"] != b["text"] || a["refusal"] != b["refusal"]
+                })
+            {
+                return Err("Responses completed message changed in terminal snapshot".into());
+            }
         }
         if previous.value["type"] == "function_call" {
             if previous.value["call_id"] != final_item["call_id"]
@@ -682,8 +724,9 @@ impl Decoder {
             {
                 return Err("Responses tool identity changed".into());
             }
-            if (previous.fragments
-                && previous.arguments != final_item["arguments"].as_str().unwrap_or(""))
+            if (previous.closed && previous.value["arguments"] != final_item["arguments"])
+                || (previous.fragments
+                    && previous.arguments != final_item["arguments"].as_str().unwrap_or(""))
                 || (!previous.fragments
                     && previous.value["arguments"].as_str().is_some_and(|s| {
                         !s.is_empty() && Some(s) != final_item["arguments"].as_str()

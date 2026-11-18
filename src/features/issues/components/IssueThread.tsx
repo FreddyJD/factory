@@ -7,6 +7,11 @@ import { useIssue } from "../hooks/useIssue";
 import { IssueTranscript } from "./IssueTranscript";
 import { QuestionForm } from "./QuestionForm";
 import { Icon } from "../../../shared/components/Icon";
+import {
+  ImageAttachments,
+  ImageGallery,
+  useIssueImages,
+} from "./ImageAttachments";
 export function IssueThread({
   task,
   issue,
@@ -24,6 +29,7 @@ export function IssueThread({
 }) {
   const session = useIssue(task.id);
   const [comment, setComment] = useState("");
+  const attachments = useIssueImages();
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<Record<string, unknown> | null>(null);
@@ -62,7 +68,7 @@ export function IssueThread({
       </button>
       <div className="issue-title">
         <h1>
-          {issue?.title ?? task.title}
+          {current.title}
           <span> #{task.id.slice(0, 7)}</span>
         </h1>
         <div className="issue-subtitle">
@@ -87,7 +93,23 @@ export function IssueThread({
               <span className="muted">opened this issue</span>
             </div>
             <div className="panel-body markdown-body">
-              <Markdown text={issue?.body || task.title} />
+              <Markdown text={issue ? issue.body : task.title} />
+              <ImageGallery
+                images={
+                  snapshot?.messages
+                    .find((message) => message.info.role === "user")
+                    ?.parts.flatMap((part) =>
+                      part.type === "image" && part.dataUrl
+                        ? [
+                            {
+                              name: part.name ?? "Attached image",
+                              dataUrl: part.dataUrl,
+                            },
+                          ]
+                        : [],
+                    ) ?? []
+                }
+              />
             </div>
           </article>
           {session.error && (
@@ -99,48 +121,6 @@ export function IssueThread({
           <div className="panel conversation-panel">
             <IssueTranscript lines={lines} />
           </div>
-          {snapshot?.permissions.map((permission) => (
-            <section className="panel permission-panel" key={permission.id}>
-              <div className="panel-heading">
-                Approval required: <strong>{permission.permission}</strong>
-              </div>
-              <div className="panel-body">
-                <pre>{JSON.stringify(permission.metadata, null, 2)}</pre>
-                <div className="button-row">
-                  <button
-                    className="btn btn-success"
-                    disabled={!!busy}
-                    onClick={() =>
-                      void action("Approving", async () => {
-                        await api("permission", {
-                          taskId: task.id,
-                          requestId: permission.id,
-                          allow: true,
-                        });
-                      })
-                    }
-                  >
-                    Allow once
-                  </button>
-                  <button
-                    className="btn btn-default"
-                    disabled={!!busy}
-                    onClick={() =>
-                      void action("Rejecting", async () => {
-                        await api("permission", {
-                          taskId: task.id,
-                          requestId: permission.id,
-                          allow: false,
-                        });
-                      })
-                    }
-                  >
-                    Reject
-                  </button>
-                </div>
-              </div>
-            </section>
-          ))}
           {snapshot?.questions.map((request) => (
             <QuestionForm
               key={request.id}
@@ -219,10 +199,20 @@ export function IssueThread({
             onSubmit={(event) => {
               event.preventDefault();
               const text = comment;
-              if (text.trim())
+              if (
+                !working &&
+                !removed &&
+                !attachments.reading &&
+                (text.trim() || attachments.images.length)
+              )
                 void action("Sending", async () => {
-                  await api("prompt", { taskId: task.id, text });
+                  await api("prompt", {
+                    taskId: task.id,
+                    text,
+                    images: attachments.images,
+                  });
                   setComment((current) => (current === text ? "" : current));
+                  attachments.clear();
                 });
             }}
           >
@@ -237,11 +227,23 @@ export function IssueThread({
                 rows={4}
                 value={comment}
                 onChange={(event) => setComment(event.target.value)}
+                onPaste={busy || removed ? undefined : attachments.paste}
+                disabled={!!busy || removed}
+              />
+              <ImageAttachments
+                attachments={attachments}
+                disabled={!!busy || removed}
               />
               <div className="form-actions">
                 <button
                   className="btn btn-success"
-                  disabled={!!busy || working || removed || !comment.trim()}
+                  disabled={
+                    !!busy ||
+                    working ||
+                    removed ||
+                    attachments.reading ||
+                    (!comment.trim() && !attachments.images.length)
+                  }
                 >
                   {busy || "Comment and run"}
                 </button>
@@ -397,12 +399,7 @@ export function IssueThread({
           )}
           <hr />
           <h4>Execution</h4>
-          <p className="muted">
-            Native Rust ·{" "}
-            {issue?.nativeEdits
-              ? "Worktree edits authorized"
-              : "Edits require approval"}
-          </p>
+          <p className="muted">Native Rust · All tool calls auto-approved</p>
         </aside>
       </div>
     </section>

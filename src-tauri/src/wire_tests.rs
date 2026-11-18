@@ -66,6 +66,67 @@ fn tools() -> Vec<Value> {
 }
 
 #[test]
+fn user_images_translate_to_every_protocol_and_survive_tool_continuations() {
+    let url = "data:image/png;base64,aW1hZ2U=";
+    let messages = vec![
+        json!({"role":"system","content":"Policy"}),
+        json!({"role":"user","content":[{"type":"text","text":"Fix this"},{"type":"image_url","image_url":{"url":url}}]}),
+        json!({"role":"assistant","tool_calls":[{"id":"call","function":{"name":"read","arguments":"{}"}}]}),
+        json!({"role":"tool","tool_call_id":"call","content":"result"}),
+    ];
+    let saved: Vec<Value> =
+        serde_json::from_slice(&serde_json::to_vec(&messages).unwrap()).unwrap();
+    for protocol in [
+        Protocol::Chat,
+        Protocol::Responses,
+        Protocol::Messages,
+        Protocol::MessagesV1,
+    ] {
+        let request = body(protocol, "fixture", &saved, &tools(), 8192).unwrap();
+        match protocol {
+            Protocol::Chat => assert_eq!(
+                request["messages"][1]["content"][1]["image_url"]["url"],
+                url
+            ),
+            Protocol::Responses => {
+                assert_eq!(request["input"][0]["content"][0]["type"], "input_text");
+                assert_eq!(
+                    request["input"][0]["content"][1],
+                    json!({"type":"input_image","image_url":url})
+                );
+            }
+            _ => assert_eq!(
+                request["messages"][0]["content"][1],
+                json!({"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW1hZ2U="}})
+            ),
+        }
+    }
+    assert_eq!(
+        chat_messages(&messages, false)[1]["content"],
+        messages[1]["content"]
+    );
+    for protocol in [Protocol::Responses, Protocol::Messages] {
+        let request = body(
+            protocol,
+            "fixture",
+            &[json!({"role":"user","content":[{"type":"image_url","image_url":{"url":url}}]})],
+            &[],
+            8192,
+        )
+        .unwrap();
+        assert!(request.to_string().contains("aW1hZ2U="));
+        assert!(body(
+            protocol,
+            "fixture",
+            &[json!({"role":"user","content":[{"type":"unknown"}]})],
+            &[],
+            8192
+        )
+        .is_err());
+    }
+}
+
+#[test]
 fn responses_tool_roundtrip_retains_final_encrypted_state_exactly_once() {
     for fragmented in [false, true] {
         let completion = stream(Protocol::Responses, response_events(), fragmented).unwrap();
@@ -98,6 +159,93 @@ fn responses_tool_roundtrip_retains_final_encrypted_state_exactly_once() {
         let chat = chat_messages(&messages, false);
         assert!(chat[2].get("provider_state").is_none());
         assert!(!chat[2].to_string().contains("ciphertext"));
+    }
+}
+#[test]
+fn responses_terminal_snapshot_finalizes_metadata_and_replays_final_state() {
+    for fragmented in [false, true] {
+        let mut events = response_events();
+        let output = &mut events.last_mut().unwrap()["response"]["output"];
+        output[0]["encrypted_content"] = json!("terminal-ciphertext");
+        output[0]["status"] = json!("completed");
+        output[1]["provider_metadata"] = json!({"complete": true});
+        let expected = output.clone();
+        let completion = stream(Protocol::Responses, events, fragmented).unwrap();
+        assert_eq!(completion.calls.len(), 1);
+        assert_eq!(completion.calls[0].arguments, function()["arguments"]);
+        assert_eq!(completion.state.as_ref().unwrap()["items"], expected);
+        let request = body(
+            Protocol::Responses,
+            "fixture",
+            &[assistant(&completion)],
+            &tools(),
+            8192,
+        )
+        .unwrap();
+        assert_eq!(request["input"], expected);
+    }
+}
+#[test]
+fn responses_completed_message_allows_metadata_but_not_payload_changes() {
+    let item = json!({"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"hello","annotations":[]}]});
+    let mut finalized = item.clone();
+    finalized["content"][0]["logprobs"] = json!([]);
+    let events = vec![
+        json!({"type":"response.output_item.done","output_index":0,"item":item}),
+        json!({"type":"response.completed","response":{"status":"completed","output":[finalized]}}),
+    ];
+    for fragmented in [false, true] {
+        let completion = stream(Protocol::Responses, events.clone(), fragmented).unwrap();
+        assert_eq!(completion.text, "hello");
+        assert_eq!(completion.state.unwrap()["items"][0], finalized);
+        for changed in [
+            json!({"text": "hello changed"}),
+            json!({"text": "different"}),
+            json!({"role": "user"}),
+            json!({"content": [{"type": "refusal", "refusal": "no"}]}),
+        ] {
+            let mut invalid = events.clone();
+            let output = &mut invalid.last_mut().unwrap()["response"]["output"][0];
+            if let Some(text) = changed.get("text") {
+                output["content"][0]["text"] = text.clone();
+            } else {
+                output
+                    .as_object_mut()
+                    .unwrap()
+                    .extend(changed.as_object().unwrap().clone());
+            }
+            assert!(stream(Protocol::Responses, invalid, fragmented).is_err());
+        }
+    }
+}
+#[test]
+fn responses_completed_tool_still_rejects_identity_and_argument_changes() {
+    for (key, changed) in [
+        ("id", "fc_2"),
+        ("type", "reasoning"),
+        ("call_id", "call_2"),
+        ("name", "write"),
+        ("arguments", "{\"filePath\":\"different\"}"),
+    ] {
+        for fragmented in [false, true] {
+            let mut events = response_events();
+            events.last_mut().unwrap()["response"]["output"][1][key] = json!(changed);
+            assert!(
+                stream(Protocol::Responses, events, fragmented).is_err(),
+                "{key}"
+            );
+        }
+    }
+    for arguments in [json!(""), Value::Null] {
+        let mut item = function();
+        item["arguments"] = arguments;
+        let events = vec![
+            json!({"type":"response.output_item.done","output_index":0,"item":item}),
+            json!({"type":"response.completed","response":{"status":"completed","output":[function()]}}),
+        ];
+        for fragmented in [false, true] {
+            assert!(stream(Protocol::Responses, events.clone(), fragmented).is_err());
+        }
     }
 }
 #[test]

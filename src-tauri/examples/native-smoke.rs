@@ -1,8 +1,54 @@
 use git_factory_lib::{
+    provider::{self, Copilot, Model},
     runtime::{self, Factory},
     tools, workspace,
 };
-use serde_json::json;
+use serde_json::{json, Value};
+use std::{
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
+use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
+
+struct Scripted(AtomicUsize);
+impl provider::Inference for Scripted {
+    fn complete<'a>(
+        &'a self,
+        _: &'a str,
+        messages: Vec<Value>,
+        _: Vec<Value>,
+        _: &'a str,
+        _: CancellationToken,
+        _: mpsc::Sender<String>,
+    ) -> futures_util::future::BoxFuture<'a, Result<provider::Completion, String>> {
+        Box::pin(async move {
+            if self.0.fetch_add(1, Ordering::SeqCst) == 0 {
+                Ok(provider::Completion {
+                    calls: vec![provider::ToolCall {
+                        id: "mcp-call".into(),
+                        name: "mcp_fixture_factory_workspace".into(),
+                        arguments: "{}".into(),
+                    }],
+                    reason: "tool_calls".into(),
+                    ..Default::default()
+                })
+            } else {
+                assert!(messages.iter().any(|m| m["role"] == "tool"
+                    && m["content"]
+                        .as_str()
+                        .is_some_and(|s| s.contains("repositories"))));
+                Ok(provider::Completion {
+                    reason: "stop".into(),
+                    ..Default::default()
+                })
+            }
+        })
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<(), String> {
@@ -12,7 +58,11 @@ async fn main() -> Result<(), String> {
         std::fs::create_dir(&source).map_err(|e| e.to_string())?;
         workspace::initialize_empty(&source)?;
     }
-    let factory = Factory::new(root.clone());
+    let factory = Factory::with_provider(
+        root.clone(),
+        Arc::new(Copilot::new(&root)),
+        Arc::new(Scripted(AtomicUsize::new(0))),
+    );
     let task = factory
         .prepare(&source, "Native MCP smoke", "fixture-model")
         .await?;
@@ -29,22 +79,33 @@ async fn main() -> Result<(), String> {
     let status=factory.mcp(&task.id,"fixture",json!({"type":"local","command":[cli,"--mcp","--workspace",source],"environment":{"GIT_FACTORY_DATA_DIR":root}})).await?;
     assert_eq!(status["fixture"]["status"], "connected");
     let session = factory.worker(&task.id).await?;
-    let connection = session
-        .connections
-        .lock()
-        .await
-        .get("fixture")
-        .cloned()
-        .ok_or("No MCP connection")?;
-    let result = connection
-        .call(
-            "mcp_fixture_factory_workspace",
-            json!({}),
-            tokio_util::sync::CancellationToken::new(),
+    let mut events = factory.events.subscribe();
+    factory
+        .prompt_with_model(
+            &task.id,
+            "Inspect the workspace",
+            Model {
+                id: "fixture-model".into(),
+                name: "Fixture".into(),
+                context: 32_000,
+            },
         )
         .await?;
-    assert!(result.contains("repositories"));
-    println!("Native MCP client connected to native Factory MCP server and called a scoped tool.");
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while session.busy().await {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .map_err(|_| "MCP agent turn did not complete without approval")?;
+    let snapshot = factory.snapshot(&task.id).await?;
+    assert_eq!(snapshot["task"]["status"], "review", "{snapshot}");
+    assert_eq!(snapshot["permissions"], json!([]));
+    assert!(snapshot["error"].is_null(), "{snapshot}");
+    while let Ok(event) = events.try_recv() {
+        assert_ne!(event["event"]["type"], "permission");
+    }
+    println!("Native agent called the scoped MCP tool and completed without approval.");
     println!(
         "Built-in native tools: {}",
         json!(tools::definitions(false, true)
@@ -52,7 +113,6 @@ async fn main() -> Result<(), String> {
             .map(|d| d["function"]["name"].as_str().unwrap())
             .collect::<Vec<_>>())
     );
-    drop(connection);
     drop(session);
     factory.shutdown().await;
     println!("No OpenCode binary, runtime installer, localhost agent server, OAuth, or inference request was used.");
