@@ -211,6 +211,7 @@ describe("issue images", () => {
   it("keeps image placeholders and previews in the transcript without printing base64", () => {
     const lines = transcript({
       task,
+      queued: [],
       messages: [
         {
           info: { id: "user", role: "user" },
@@ -236,5 +237,146 @@ describe("issue images", () => {
         image: { name: "screen.png", dataUrl: "data:image/png;base64,test" },
       },
     ]);
+  });
+
+  it.each(["working", "needs-you", "publishing", "review"])(
+    "queues follow-up text and images while %s without duplicate submissions",
+    async (status) => {
+      api.mockReset();
+      let finish!: () => void;
+      api.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve;
+          }),
+      );
+      snapshot.value = {
+        task: { ...task, status },
+        messages: [],
+        queued: [],
+        status: { type: "busy" },
+        questions: [],
+      };
+      render(
+        <IssueThread
+          task={task}
+          onBack={vi.fn()}
+          onCode={vi.fn()}
+          onChange={vi.fn()}
+          onLocalReview={vi.fn()}
+          onRemove={vi.fn()}
+          github={false}
+        />,
+      );
+      const field = screen.getByLabelText("Issue comment");
+      expect(
+        (
+          screen.getByRole("button", {
+            name: "Add to queue",
+          }) as HTMLButtonElement
+        ).disabled,
+      ).toBe(true);
+      fireEvent.change(field, { target: { value: "Check this too" } });
+      fireEvent.paste(field, {
+        clipboardData: {
+          items: [{ kind: "file", getAsFile: image }],
+          getData: () => "",
+        },
+      });
+      await screen.findByAltText("screen.png");
+      fireEvent.click(screen.getByRole("button", { name: "Add to queue" }));
+      fireEvent.submit(field.closest("form")!);
+      expect(api).toHaveBeenCalledTimes(1);
+      expect(api).toHaveBeenCalledWith("prompt", {
+        taskId: task.id,
+        text: "Check this too",
+        images: [
+          { name: "screen.png", dataUrl: "data:image/png;base64,cG5nIGJ5dGVz" },
+        ],
+      });
+      finish();
+      await waitFor(() =>
+        expect((field as HTMLTextAreaElement).value).toBe(""),
+      );
+      expect(screen.queryByAltText("screen.png")).toBeNull();
+    },
+  );
+
+  it("preserves a queued draft and images if submission fails", async () => {
+    api.mockReset();
+    api.mockRejectedValue(Error("Queue unavailable"));
+    snapshot.value = {
+      task,
+      messages: [],
+      queued: [],
+      status: { type: "busy" },
+      questions: [],
+    };
+    render(
+      <IssueThread
+        task={task}
+        onBack={vi.fn()}
+        onCode={vi.fn()}
+        onChange={vi.fn()}
+        onLocalReview={vi.fn()}
+        onRemove={vi.fn()}
+        github={false}
+      />,
+    );
+    const field = screen.getByLabelText("Issue comment");
+    fireEvent.change(field, { target: { value: "Keep my draft" } });
+    fireEvent.paste(field, {
+      clipboardData: {
+        items: [{ kind: "file", getAsFile: image }],
+        getData: () => "",
+      },
+    });
+    await screen.findByAltText("screen.png");
+    fireEvent.click(screen.getByRole("button", { name: "Add to queue" }));
+    await screen.findByText("Error: Queue unavailable");
+    expect((field as HTMLTextAreaElement).value).toBe("Keep my draft");
+    expect(screen.getByAltText("screen.png")).toBeTruthy();
+  });
+
+  it("shows queued comments in order with images and resumes a paused queue", async () => {
+    api.mockReset();
+    api.mockResolvedValue(true);
+    snapshot.value = {
+      task: { ...task, status: "stopped" },
+      messages: [],
+      status: { type: "idle" },
+      questions: [],
+      queued: [
+        { id: "first", text: "First follow-up", images: [] },
+        {
+          id: "second",
+          text: "Second follow-up",
+          images: [
+            { name: "queued.png", dataUrl: "data:image/png;base64,test" },
+          ],
+        },
+      ],
+    };
+    render(
+      <IssueThread
+        task={task}
+        onBack={vi.fn()}
+        onCode={vi.fn()}
+        onChange={vi.fn()}
+        onLocalReview={vi.fn()}
+        onRemove={vi.fn()}
+        github={false}
+      />,
+    );
+    const queue = screen.getByRole("region", { name: "Queued comments" });
+    expect(queue.textContent).toContain("Queued comments (2)");
+    expect(queue.textContent!.indexOf("First follow-up")).toBeLessThan(
+      queue.textContent!.indexOf("Second follow-up"),
+    );
+    expect(screen.getByAltText("queued.png")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Resume queue" }));
+    await waitFor(() =>
+      expect(api).toHaveBeenCalledWith("queue_resume", { taskId: task.id }),
+    );
   });
 });

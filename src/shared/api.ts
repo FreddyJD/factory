@@ -56,6 +56,11 @@ export interface Part {
 }
 export interface Snapshot {
   error?: string;
+  queued: {
+    id: string;
+    text: string;
+    images: { name: string; dataUrl: string }[];
+  }[];
   task: Task;
   messages: {
     info: { role: string; id: string; error?: unknown };
