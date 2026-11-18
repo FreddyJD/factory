@@ -458,7 +458,10 @@ impl Factory {
         }
         let auto_pr = args["autoPr"] == true;
         let target = if auto_pr {
-            let auth = self.github.resolve(project.github_account_id.as_deref())?;
+            let auth = self
+                .github
+                .resolve(project.github_account_id.as_deref())
+                .await?;
             issues::identity(&project.path, &auth).await?
         } else {
             Value::Null
@@ -533,22 +536,32 @@ impl Factory {
             }
         }
     }
-    pub async fn publish_issue(&self, id: &str, preview: &Value) -> Result<Value> {
+    pub async fn publish_issue(
+        &self,
+        id: &str,
+        preview: &Value,
+        confirm_account: bool,
+    ) -> Result<Value> {
         let session = self.worker(id).await?;
         let _gate = session.lifecycle.lock().await;
         if session.busy().await || session.closing.load(std::sync::atomic::Ordering::SeqCst) {
             return Err("Wait for the issue to stop before publishing".into());
         }
         let task = session.task.lock().await.clone();
-        let mut issue = issues::load(&self.root, id)?;
+        let issue = issues::load(&self.root, id)?;
         let _github_guard = self.github.gate.read().await;
         let _github_file = self.github.file_gate(false).await?;
         let project = self.repositories.project(&issue.project_id).await?;
-        let auth = self.github.resolve(project.github_account_id.as_deref())?;
-        if issue.target.is_null() {
-            issue.target = issues::identity(&task.checkouts[0].path, &auth).await?;
-            issues::save(&self.root, &issue)?;
-        }
+        let account_id = if confirm_account {
+            match preview.get("accountId") {
+                Some(Value::Null) => None,
+                Some(Value::String(id)) => Some(id.as_str()),
+                _ => return Err("Review the GitHub identity again before publishing".into()),
+            }
+        } else {
+            project.github_account_id.as_deref()
+        };
+        let auth = self.github.resolve(account_id).await?;
         let cancel = CancellationToken::new();
         *session.publication_cancel.lock().await = Some(cancel.clone());
         if session.closing.load(std::sync::atomic::Ordering::SeqCst) {
@@ -559,11 +572,30 @@ impl Factory {
         session
             .active
             .store(true, std::sync::atomic::Ordering::SeqCst);
-        let result = issues::publish(&self.root, &task, preview, cancel.clone(), &auth).await;
+        let result = issues::publish(
+            &self.root,
+            &task,
+            preview,
+            cancel.clone(),
+            &auth,
+            confirm_account,
+        )
+        .await;
         session.publication_cancel.lock().await.take();
         session
             .active
             .store(false, std::sync::atomic::Ordering::SeqCst);
+        if result.is_ok() {
+            let mut history = session.history.lock().await;
+            if history
+                .error
+                .as_ref()
+                .is_some_and(|e| e.starts_with("Draft PR:"))
+            {
+                history.error = None;
+            }
+        }
+        session.persist().await?;
         session.status("review").await?;
         if result.is_ok()
             && !cancel.is_cancelled()
@@ -749,7 +781,7 @@ impl Factory {
                             let _guard = github.gate.read().await;
                             let _file = github.file_gate(false).await?;
                             let project = repositories.project(&issue.project_id).await?;
-                            let auth = github.resolve(project.github_account_id.as_deref())?;
+                            let auth = github.resolve(project.github_account_id.as_deref()).await?;
                             let candidate = issues::candidate(&task, &auth).await?;
                             issues::publish(
                                 &actor.root,
@@ -757,6 +789,7 @@ impl Factory {
                                 &candidate,
                                 cancellation.clone(),
                                 &auth,
+                                false,
                             )
                             .await
                         }
@@ -1439,6 +1472,181 @@ pub async fn review(root: &Path, id: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn manual_publication_reauthorizes_only_reviewed_safe_retries_and_clears_stale_error() {
+        use super::*;
+        use crate::repository;
+        use std::os::unix::fs::PermissionsExt;
+        const CHILD: &str = "FACTORY_TEST_PR_RETRY";
+        if let Some(root) = std::env::var_os(CHILD) {
+            let root = dunce::canonicalize(root).unwrap();
+            let source = root.join("source");
+            fs::create_dir_all(&source).unwrap();
+            let workspace = workspace::initialize_empty(&source).unwrap();
+            let base = workspace.repositories[0].base.clone();
+            fs::write(root.join("base"), &base).unwrap();
+            repository::git(
+                &source,
+                &[
+                    "remote",
+                    "add",
+                    "origin",
+                    "https://github.com/owner/repo.git",
+                ],
+            )
+            .await
+            .unwrap();
+            let data = root.join("data");
+            fs::create_dir_all(&data).unwrap();
+            let factory = Factory::new(data.clone());
+            let project = factory
+                .repositories
+                .register(&source)
+                .await
+                .unwrap()
+                .remove(0);
+            let mut task = factory
+                .prepare(&source, "Retry fixture", "fixture")
+                .await
+                .unwrap();
+            task.status = "review".into();
+            workspace::save_task(&data, &task).unwrap();
+            fs::write(task.checkouts[0].path.join("change.txt"), "change").unwrap();
+            let original_target = json!({"repository":"owner/repo","defaultBranch":"main","account":"managed_user","accountId":null});
+            issues::save(
+                &data,
+                &Issue {
+                    task_id: task.id.clone(),
+                    project_id: project.id.clone(),
+                    title: "Change".into(),
+                    outcome: "completed".into(),
+                    target: original_target.clone(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let session = factory.worker(&task.id).await.unwrap();
+            session.history.lock().await.error = Some("Draft PR: managed user 403".into());
+            let auth = factory.github.resolve(None).await.unwrap();
+            let preview = issues::candidate(&task, &auth).await.unwrap();
+            let mut stale = preview.clone();
+            stale["tree"] = json!("stale");
+            assert!(factory
+                .publish_issue(&task.id, &stale, true)
+                .await
+                .unwrap_err()
+                .contains("changed"));
+            assert_eq!(
+                issues::load(&data, &task.id).unwrap().target,
+                original_target
+            );
+            assert!(!root.join("pushes").exists());
+            fs::write(root.join("fail-before-push"), "").unwrap();
+            assert!(factory
+                .publish_issue(&task.id, &preview, true)
+                .await
+                .is_err());
+            let failed = issues::load(&data, &task.id).unwrap();
+            assert_eq!(failed.publication["last"]["state"], "committing");
+            assert!(!root.join("pushes").exists());
+            let head = repository::git(&task.checkouts[0].path, &["rev-parse", "HEAD"])
+                .await
+                .unwrap();
+            assert_ne!(head.trim(), base);
+            fs::remove_file(root.join("fail-before-push")).unwrap();
+            let retry = issues::candidate(&task, &auth).await.unwrap();
+            for state in ["pushing", "creating-pr"] {
+                let mut issue = issues::load(&data, &task.id).unwrap();
+                issue.publication = json!({"state":"failed-or-unknown","last":{"state":state}});
+                issues::save(&data, &issue).unwrap();
+                assert!(factory.publish_issue(&task.id, &retry, true).await.is_err());
+                assert!(!root.join("pushes").exists());
+            }
+            issues::save(&data, &failed).unwrap();
+            let published = factory.publish_issue(&task.id, &retry, true).await.unwrap();
+            assert_eq!(published["state"], "published");
+            assert_eq!(
+                repository::git(&task.checkouts[0].path, &["rev-parse", "HEAD"])
+                    .await
+                    .unwrap(),
+                head
+            );
+            assert_eq!(fs::read_to_string(root.join("pushes")).unwrap(), "push\n");
+            assert_eq!(fs::read_to_string(root.join("posts")).unwrap(), "post\n");
+            assert_eq!(
+                issues::load(&data, &task.id).unwrap().target["account"],
+                "personal"
+            );
+            assert!(factory
+                .repositories
+                .project(&project.id)
+                .await
+                .unwrap()
+                .github_account_id
+                .is_none());
+            assert!(session.history.lock().await.error.is_none());
+            let history: History = serde_json::from_slice(
+                &fs::read(data.join("sessions").join(format!("{}.json", task.id))).unwrap(),
+            )
+            .unwrap();
+            assert!(history.error.is_none());
+            factory.close(&task.id).await.unwrap();
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("pr-retry-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let real_git = std::process::Command::new("/usr/bin/which")
+            .arg("git")
+            .output()
+            .unwrap();
+        let real_git = String::from_utf8(real_git.stdout)
+            .unwrap()
+            .trim()
+            .to_string();
+        let git = root.join("git");
+        let gh = root.join("gh");
+        fs::write(
+            &git,
+            r#"#!/bin/sh
+case "$1" in
+  push) printf 'push\n' >> "$FACTORY_TEST_PR_RETRY/pushes" ;;
+  ls-remote) printf '%s\trefs/heads/fixture\n' "$("$FACTORY_TEST_REAL_GIT" rev-parse HEAD)" ;;
+  *) exec "$FACTORY_TEST_REAL_GIT" "$@" ;;
+esac
+"#,
+        )
+        .unwrap();
+        fs::write(&gh, r#"#!/bin/sh
+case "$1 $2" in
+  'api user') printf '{"id":42,"login":"personal"}' ;;
+  'repo view')
+    if test -f "$FACTORY_TEST_PR_RETRY/fail-before-push" && test "$(git rev-parse HEAD)" != "$(head -n 1 "$FACTORY_TEST_PR_RETRY/base")"; then exit 1; fi
+    printf '{"defaultBranchRef":{"name":"main"},"viewerPermission":"ADMIN"}' ;;
+  'api --method') printf 'post\n' >> "$FACTORY_TEST_PR_RETRY/posts"; printf '{"number":1,"html_url":"https://github.com/owner/repo/pull/1"}' ;;
+  api*) printf '{"object":{"sha":"%s"}}' "$(head -n 1 "$FACTORY_TEST_PR_RETRY/base")" ;;
+  *) exit 1 ;;
+esac
+"#).unwrap();
+        for path in [&git, &gh] {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let mut paths = vec![root.clone()];
+        paths.extend(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        ));
+        let output = tokio::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "runtime::tests::manual_publication_reauthorizes_only_reviewed_safe_retries_and_clears_stale_error", "--nocapture"])
+            .env(CHILD, &root).env("GIT_FACTORY_GH_PATH", &gh).env("FACTORY_TEST_REAL_GIT", real_git)
+            .env("PATH", std::env::join_paths(paths).unwrap()).output().await.unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
     use super::*;
 
     struct ContextLoop {

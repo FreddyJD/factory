@@ -100,6 +100,27 @@ pub async fn command_env(
     index: Option<&Path>,
     environment: &[(&str, Option<&str>)],
 ) -> Result<Vec<u8>> {
+    Ok(command_output(
+        executable,
+        directory,
+        args,
+        input,
+        seconds,
+        index,
+        environment,
+    )
+    .await?
+    .0)
+}
+pub async fn command_output(
+    executable: &Path,
+    directory: &Path,
+    args: &[&str],
+    input: Option<&[u8]>,
+    seconds: u64,
+    index: Option<&Path>,
+    environment: &[(&str, Option<&str>)],
+) -> Result<(Vec<u8>, Vec<u8>)> {
     let mut cmd = Command::new(executable);
     cmd.current_dir(directory)
         .args(args)
@@ -222,7 +243,7 @@ pub async fn command_env(
                 String::from_utf8_lossy(&err)
             ));
         }
-        Ok(out)
+        Ok((out, err))
     };
     match tokio::time::timeout(Duration::from_secs(seconds), operation).await {
         Ok(result) => {

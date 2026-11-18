@@ -369,12 +369,21 @@ pub async fn snapshot_tree(path: &Path, base: &str) -> Result<(String, String)> 
     result
 }
 
+// Only known pre-push failures are safe to retry. Unknown remote outcomes stay blocked.
+pub fn publication_retryable(publication: &Value) -> bool {
+    publication.is_null()
+        || (publication["state"] == "failed-or-unknown"
+            && (publication.get("last").is_some_and(Value::is_null)
+                || publication["last"]["state"] == "committing"))
+}
+
 pub async fn publish(
     root: &Path,
     task: &Task,
     expected: &Value,
     cancel: CancellationToken,
     auth: &Auth,
+    confirm_account: bool,
 ) -> Result<Value> {
     let mut issue = load(root, &task.id)?;
     if issue.outcome != "completed"
@@ -385,19 +394,24 @@ pub async fn publish(
     {
         return Err("Only a normally completed issue can publish. Stopped, failed and budget-limited runs cannot.".into());
     }
-    if !issue.publication.is_null() {
+    if !issue.publication.is_null()
+        && !(confirm_account && publication_retryable(&issue.publication))
+    {
         return Err(
             "Publication already attempted; inspect the recorded result before any retry".into(),
         );
     }
-    if issue.target["accountId"] != json!(auth.account.as_ref().map(|a| &a.id)) {
+    if !confirm_account && issue.target["accountId"] != json!(auth.account.as_ref().map(|a| &a.id))
+    {
         return Err("GitHub account changed since issue authorization; restore its account in Settings or create a new issue".into());
     }
     let before = candidate(task, auth).await?;
-    if issue.target["repository"] != before["repository"]
-        || issue.target["account"] != before["account"]
-        || issue.target["accountId"] != before["accountId"]
-        || issue.target["defaultBranch"] != before["base"]
+    if (!issue.target.is_null()
+        && (issue.target["repository"] != before["repository"]
+            || issue.target["defaultBranch"] != before["base"]))
+        || (!confirm_account
+            && (issue.target["account"] != before["account"]
+                || issue.target["accountId"] != before["accountId"]))
     {
         return Err(
             "GitHub publication target or account changed since issue authorization".into(),
@@ -426,6 +440,11 @@ pub async fn publish(
     {
         return Err("Custom push URLs require manual publication".into());
     }
+    if confirm_account {
+        issue.target = json!({"repository":before["repository"],"account":before["account"],"accountId":before["accountId"],"defaultBranch":before["base"]});
+        issue.publication = Value::Null;
+        save(root, &issue)?;
+    }
     let result=async{
         if cancel.is_cancelled(){return Err("Publication cancelled".into());}
         if candidate(task, auth).await?!=before{return Err("Candidate changed; inspect changes before publishing".into());}
@@ -433,7 +452,8 @@ pub async fn publish(
         let tree=before["tree"].as_str().ok_or("Missing candidate tree")?;
         let parent=before["head"].as_str().ok_or("Missing candidate parent")?;
         if repository::git(path,&["config","--get","commit.gpgsign"]).await.is_ok_and(|v|v.trim()=="true"){return Err("This repository requires signed commits; publish manually until signed commit-tree is configured".into());}
-        let head=hardened_git(path,&["commit-tree",tree,"-p",parent,"-m",&issue.title],30).await?;
+        let current_tree=repository::git(path,&["rev-parse",&format!("{parent}^{{tree}}")]).await?;
+        let head=if current_tree.trim()==tree { parent.to_string() } else { hardened_git(path,&["commit-tree",tree,"-p",parent,"-m",&issue.title],30).await? };
         let branch=&task.checkouts[0].branch;
         hardened_git(path,&["update-ref",&format!("refs/heads/{branch}"),head.trim(),parent],20).await?;
         hardened_git(path,&["read-tree",tree],20).await?;
@@ -474,6 +494,28 @@ pub async fn publish(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn retries_never_include_uncertain_remote_outcomes() {
+        for record in [
+            Value::Null,
+            json!({"state":"failed-or-unknown","last":null}),
+            json!({"state":"failed-or-unknown","last":{"state":"committing"}}),
+        ] {
+            assert!(publication_retryable(&record));
+        }
+        for record in [
+            json!({}),
+            json!({"state":"failed-or-unknown"}),
+            json!({"state":"pushing"}),
+            json!({"state":"creating-pr"}),
+            json!({"state":"published"}),
+            json!({"state":"failed-or-unknown","last":{"state":"pushing"}}),
+            json!({"state":"failed-or-unknown","last":{"state":"creating-pr"}}),
+            json!({"state":"failed-or-unknown","last":{"state":"failed-or-unknown","last":{"state":"committing"}}}),
+        ] {
+            assert!(!publication_retryable(&record), "{record}");
+        }
+    }
     #[tokio::test]
     async fn changing_selected_account_refuses_publication_before_any_git_operation() {
         let root = std::env::temp_dir().join(format!("publish-account-{}", uuid::Uuid::new_v4()));
@@ -497,10 +539,20 @@ mod tests {
             },
         )
         .unwrap();
-        let auth = crate::github::Accounts::new(&root).resolve(None).unwrap();
-        let error = publish(&root, &task, &Value::Null, CancellationToken::new(), &auth)
+        let auth = crate::github::Accounts::new(&root)
+            .resolve(None)
             .await
-            .unwrap_err();
+            .unwrap();
+        let error = publish(
+            &root,
+            &task,
+            &Value::Null,
+            CancellationToken::new(),
+            &auth,
+            false,
+        )
+        .await
+        .unwrap_err();
         assert!(error.contains("account changed"));
         assert!(load(&root, &task.id).unwrap().publication.is_null());
         fs::remove_dir_all(root).unwrap();
