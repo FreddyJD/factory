@@ -123,6 +123,40 @@ export function IssueThread({
           <div className="panel conversation-panel">
             <IssueTranscript lines={lines} />
           </div>
+          {!!snapshot?.queued?.length && (
+            <section className="panel" aria-label="Queued comments">
+              <div className="panel-heading">
+                <strong>Queued comments ({snapshot.queued.length})</strong>
+              </div>
+              <div className="panel-body">
+                <p className="muted">
+                  {working
+                    ? "These comments will run in order after the current turn finishes."
+                    : "The queue is paused. Resume to run these comments in order."}
+                </p>
+                {snapshot.queued.map((prompt, index) => (
+                  <article className="comment-card" key={prompt.id}>
+                    <strong>Queued #{index + 1}</strong>
+                    <Markdown text={prompt.text} />
+                    <ImageGallery images={prompt.images} />
+                  </article>
+                ))}
+                {!working && (
+                  <button
+                    className="btn btn-success"
+                    disabled={!!busy || removed}
+                    onClick={() =>
+                      void action("Resuming", async () => {
+                        await api("queue_resume", { taskId: task.id });
+                      })
+                    }
+                  >
+                    Resume queue
+                  </button>
+                )}
+              </div>
+            </section>
+          )}
           {snapshot?.questions.map((request) => (
             <QuestionForm
               key={request.id}
@@ -198,12 +232,11 @@ export function IssueThread({
               event.preventDefault();
               const text = comment;
               if (
-                !working &&
                 !removed &&
                 !attachments.reading &&
                 (text.trim() || attachments.images.length)
               )
-                void action("Sending", async () => {
+                void action(working ? "Queuing" : "Sending", async () => {
                   await api("prompt", {
                     taskId: task.id,
                     text,
@@ -237,13 +270,12 @@ export function IssueThread({
                   className="btn btn-success"
                   disabled={
                     !!busy ||
-                    working ||
                     removed ||
                     attachments.reading ||
                     (!comment.trim() && !attachments.images.length)
                   }
                 >
-                  {busy || "Comment and run"}
+                  {busy || (working ? "Add to queue" : "Comment and run")}
                 </button>
               </div>
             </div>

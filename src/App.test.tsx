@@ -1042,7 +1042,7 @@ describe("repository-first application", () => {
     const nav = await screen.findByRole("navigation", { name: "Repository" });
     fireEvent.click(within(nav).getByRole("button", { name: "Pull requests" }));
     fireEvent.click(
-      await screen.findByRole("button", { name: /Local change/ }),
+      await screen.findByRole("button", { name: /^Local change/ }),
     );
     await screen.findByText("+local content");
     expect(screen.queryByRole("heading", { name: "Pull requests" })).toBeNull();
@@ -1103,7 +1103,9 @@ describe("repository-first application", () => {
     render(<App />);
     const nav = await screen.findByRole("navigation", { name: "Repository" });
     fireEvent.click(within(nav).getByRole("button", { name: "Pull requests" }));
-    fireEvent.click(await screen.findByRole("button", { name: /Local merge/ }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /^Local merge/ }),
+    );
     fireEvent.click(
       await screen.findByRole("button", { name: "Merge locally" }),
     );

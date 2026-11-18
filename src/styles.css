@@ -1003,6 +1003,29 @@ input[type="radio"] {
 .issue-row:hover {
   background: #f6f8fa;
 }
+.local-review-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  border-top: 1px solid #d8dee4;
+}
+.local-review-row > .issue-row {
+  flex: 1 1 240px;
+  width: auto;
+  min-width: 0;
+  border: 0;
+}
+.local-review-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 8px 16px;
+  margin-left: auto;
+}
+.local-reviews .review-confirm {
+  overflow-wrap: anywhere;
+}
 .issue-indicator {
   color: #1a7f37;
   margin-top: 2px;

@@ -261,6 +261,10 @@ async fn factory_api(
                 .await?;
             Ok(json!(true))
         }
+        "queue_resume" => {
+            factory.resume_queue(text("taskId")?).await?;
+            Ok(json!(true))
+        }
         "cancel" => {
             factory.cancel(text("taskId")?).await?;
             Ok(json!(true))
