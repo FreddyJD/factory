@@ -40,6 +40,8 @@ Start the app and open a repository or a parent folder of repositories. Code ope
 
 Task worktrees and history survive restarts. Stop cancels a turn; Close worker releases a local slot without removing files. Four task workers may be open simultaneously. New code executes as your user, so only use trusted repositories, commands and MCP servers. Git content filters are disabled for Factory Git operations; LFS files remain pointers.
 
+The icon beside the Code checkout selector opens a 3D worktree visualization. Choose **Factory** or **Kitchen** in **Settings > General > Visualization**; the preference is saved on this device. Native agent tools drive conveyor parcels or dishes and busy chefs. The embedded activity feed shows tools and observed file paths across worktrees; click a worktree name to select it, then use **Open files** to return to its files. Drag to orbit, scroll to zoom, and pause motion without pausing agents. Reduced-motion preferences are respected. Recent transcript history is labeled history and never replayed as fresh activity; delegated investigations appear as a single `task` call, and separate CLI processes do not broadcast live tools to the desktop. The read-only browser preview shows sample history, not live production.
+
 Build the console integration executable with `cargo build --manifest-path src-tauri/Cargo.toml --bin factory-cli`. The Windows installer includes it beside the desktop executable. See [ACP/MCP setup](docs/protocols.md).
 
 ## Local Review And Merge

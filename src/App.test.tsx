@@ -27,6 +27,9 @@ vi.mock("@tauri-apps/api/event", () => ({
 vi.mock("./features/issues/components/IssueTranscript", () => ({
   IssueTranscript: () => <div>Conversation canvas</div>,
 }));
+vi.mock("./features/repository/components/FactoryScene", () => ({
+  default: () => <div>3D factory scene</div>,
+}));
 const projects = [
   { id: "project-a", name: "factory", path: "/repo" },
   { id: "project-b", name: "api", path: "/api" },
@@ -197,7 +200,196 @@ beforeEach(() => {
   invoke.mockImplementation(handler);
 });
 afterEach(cleanup);
+describe("factory view", () => {
+  it("gates the factory beside the checkout dropdown and preserves the file path", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "README.md" }));
+    await screen.findByLabelText("Contents of README.md");
+    const toggle = screen.getByRole("button", { name: "Factory view" });
+    expect(
+      toggle.previousElementSibling
+        ?.querySelector("select")
+        ?.getAttribute("aria-label"),
+    ).toBe("Checkout or worktree");
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(toggle);
+    await screen.findByRole("complementary", { name: "Activity feed" });
+    expect(screen.queryByLabelText("Filter files")).toBeNull();
+    expect(screen.queryByLabelText("Contents of README.md")).toBeNull();
+    fireEvent.click(toggle);
+    expect(await screen.findByLabelText("Contents of README.md")).toBeTruthy();
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "Repository" })).getByRole(
+        "button",
+        { name: "History" },
+      ),
+    );
+    expect(screen.queryByRole("button", { name: "Factory view" })).toBeNull();
+  });
+  it("shows tools across worktrees in the scene feed and opens the selected files", async () => {
+    render(<App />);
+    await screen.findByRole("button", { name: "README.md" });
+    fireEvent.click(screen.getByRole("button", { name: "Factory view" }));
+    const feed = await screen.findByRole("log", {
+      name: "Tool and file activity",
+    });
+    const emit = (status: string) =>
+      act(() =>
+        listeners.forEach((callback) =>
+          callback({
+            payload: {
+              taskId: task.id,
+              event: {
+                type: "tool",
+                properties: {
+                  messageId: "m",
+                  callId: "c",
+                  name: "bash",
+                  status,
+                  input: { command: "npm test" },
+                },
+              },
+            },
+          }),
+        ),
+      );
+    emit("running");
+    expect(within(feed).getByText("npm test")).toBeTruthy();
+    fireEvent.click(
+      within(feed).getByRole("button", { name: "factory/health" }),
+    );
+    expect(feed.querySelector('[data-status="running"]')).not.toBeNull();
+    emit("error");
+    expect(within(feed).getByText("failed")).toBeTruthy();
+    expect(feed.querySelector('[data-status="running"]')).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Open files" }));
+    expect(
+      await screen.findByRole("button", { name: "agent-only.rs" }),
+    ).toBeTruthy();
+    expect(
+      (screen.getByLabelText("Checkout or worktree") as HTMLSelectElement)
+        .value,
+    ).toBe("agent");
+    expect(invoke.mock.calls.some((c) => c[1].action === "prompt")).toBe(false);
+  });
+  it("never turns recorded completions into running tools", async () => {
+    invoke.mockImplementation((command, params) =>
+      params.action === "snapshot"
+        ? {
+            task,
+            queued: [],
+            permissions: [],
+            questions: [],
+            status: { type: "busy" },
+            messages: [
+              {
+                info: { id: "m", role: "assistant" },
+                parts: [
+                  {
+                    id: "c",
+                    type: "tool",
+                    tool: "read",
+                    state: {
+                      status: "completed",
+                      input: { filePath: "recorded.rs" },
+                    },
+                  },
+                ],
+              },
+            ],
+          }
+        : handler(command, params),
+    );
+    render(<App />);
+    await screen.findByRole("button", { name: "README.md" });
+    fireEvent.click(screen.getByRole("button", { name: "Factory view" }));
+    fireEvent.change(screen.getByLabelText("Checkout or worktree"), {
+      target: { value: "agent" },
+    });
+    await screen.findByText("recorded.rs");
+    expect(screen.getByText("history")).toBeTruthy();
+    expect(
+      screen
+        .getByRole("log", { name: "Tool and file activity" })
+        .querySelector('[data-status="running"]'),
+    ).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "api" }));
+    expect(screen.queryByText("recorded.rs")).toBeNull();
+    expect(
+      screen
+        .getByRole("button", { name: "Factory view" })
+        .getAttribute("aria-pressed"),
+    ).toBe("false");
+  });
+});
 describe("repository-first application", () => {
+  it("persists kitchen scenery from Settings and returns directly to the scene", async () => {
+    render(<App />);
+    await screen.findByRole("button", { name: "README.md" });
+    fireEvent.click(screen.getByRole("button", { name: "Factory view" }));
+    expect(screen.queryByText("Factory floor")).toBeNull();
+    expect(screen.queryByText("Production lines")).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Visualization settings" }),
+    );
+    fireEvent.click(screen.getByRole("radio", { name: /Kitchen/ }));
+    expect(localStorage.getItem("factory-visualization")).toBe("kitchen");
+    fireEvent.click(screen.getByRole("button", { name: "factory" }));
+    expect(
+      await screen.findByRole("region", { name: "Factory view" }),
+    ).toBeTruthy();
+    expect(
+      screen
+        .getByRole("region", { name: "Factory view" })
+        .getAttribute("data-theme"),
+    ).toBe("kitchen");
+    fireEvent.click(screen.getByRole("button", { name: "Activity feed" }));
+    expect(screen.queryByRole("log")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Activity feed" }));
+    expect(screen.getByRole("log")).toBeTruthy();
+    cleanup();
+    render(<App />);
+    await screen.findByRole("button", { name: "README.md" });
+    fireEvent.click(screen.getByRole("button", { name: "Factory view" }));
+    expect(
+      screen
+        .getByRole("region", { name: "Factory view" })
+        .getAttribute("data-theme"),
+    ).toBe("kitchen");
+  });
+  it("shows attributed file observations inside the scene", async () => {
+    render(<App />);
+    await screen.findByRole("button", { name: "README.md" });
+    fireEvent.click(screen.getByRole("button", { name: "Factory view" }));
+    act(() =>
+      listeners.forEach((callback) =>
+        callback({
+          payload: {
+            taskId: task.id,
+            event: {
+              type: "file-activity",
+              properties: {
+                checkoutPath: "/worktrees/health",
+                path: "src/live.rs",
+                access: "write",
+                observedAt: Date.now(),
+              },
+            },
+          },
+        }),
+      ),
+    );
+    const log = screen.getByRole("log");
+    expect(within(log).getByText("src/live.rs")).toBeTruthy();
+    expect(within(log).getByText("write")).toBeTruthy();
+    fireEvent.click(
+      within(log).getByRole("button", { name: "factory/health" }),
+    );
+    expect(
+      (screen.getByLabelText("Checkout or worktree") as HTMLSelectElement)
+        .value,
+    ).toBe("agent");
+  });
   it.each([
     "failed",
     "review",

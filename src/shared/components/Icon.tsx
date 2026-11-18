@@ -1,5 +1,22 @@
 export function Icon({ name, size = 16 }: { name: string; size?: number }) {
   const paths: Record<string, React.ReactNode> = {
+    conversation: (
+      <>
+        <path d="M2 2h12v9H6l-4 3zM5 5h6M5 8h4" />
+      </>
+    ),
+    chef: (
+      <>
+        <path d="M4 10V7.5a3 3 0 0 1-1-5.8 3 3 0 0 1 4.8-.5 3 3 0 0 1 5.2 1 2.8 2.8 0 0 1-1 5.3V10zM4 10h8v4H4z" />
+        <path d="M6.5 10V7m3 3V7M4 12h8" />
+      </>
+    ),
+    factory: (
+      <>
+        <path d="M1.5 14.5h13V6l-4 2V5L6 7.5V1.5H3v7l-1.5 1z" />
+        <path d="M5 11v1m3-1v1m3-1v1M3 4h3" />
+      </>
+    ),
     code: (
       <>
         <path d="m5 5-4 3 4 3m6-6 4 3-4 3M9 2 7 14" />

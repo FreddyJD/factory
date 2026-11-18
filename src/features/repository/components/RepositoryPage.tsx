@@ -11,8 +11,14 @@ import { IssueList } from "../../issues/components/IssueList";
 import { IssueThread } from "../../issues/components/IssueThread";
 import { NewIssue } from "../../issues/components/NewIssue";
 import { PullRequestsView } from "../../pull-requests/components/PullRequestsView";
+import { FactoryView } from "./FactoryView";
+import { useToolActivity } from "../hooks/useToolActivity";
+import type { Visualization } from "../../../shared/visualization";
 
 export function RepositoryPage({
+  visualization,
+  factory,
+  setFactory,
   project,
   activity,
   tasks: allTasks,
@@ -22,6 +28,9 @@ export function RepositoryPage({
   refresh,
   onSettings,
 }: {
+  visualization: Visualization;
+  factory: boolean;
+  setFactory: (value: boolean) => void;
   project: Project;
   activity: FileActivity[];
   tasks: Task[];
@@ -31,7 +40,18 @@ export function RepositoryPage({
   refresh: () => void;
   onSettings: () => void;
 }) {
-  const repository = useRepository(project, tab === "code", activity);
+  const repository = useRepository(
+    project,
+    tab === "code" && !factory,
+    activity,
+    tab === "code",
+  );
+  const factoryTasks = allTasks.filter((task) =>
+    repository.inventory.value?.targets.some(
+      (target) => target.taskId === task.id,
+    ),
+  );
+  const toolActivity = useToolActivity(factoryTasks, tab === "code" && factory);
   const local = useResource<{ issues: Issue[]; github: boolean }>(
     tab === "issues" || tab === "pulls" ? `local-reviews:${project.id}` : null,
     () => api("local_reviews", { projectId: project.id }),
@@ -198,6 +218,9 @@ export function RepositoryPage({
         )}
         {tab === "code" && (
           <CodeBrowser
+            visualization={visualization}
+            factory={factory}
+            toggleFactory={() => setFactory(!factory)}
             activity={activity}
             project={project}
             inventory={repository.inventory.value}
@@ -213,7 +236,21 @@ export function RepositoryPage({
               repository.inventory.refresh();
               repository.listing.refresh();
             }}
-          />
+          >
+            <FactoryView
+              visualization={visualization}
+              onSettings={onSettings}
+              inventory={repository.inventory.value}
+              target={repository.target}
+              calls={toolActivity.calls}
+              activity={activity}
+              choose={repository.choose}
+              openFiles={() => setFactory(false)}
+              connection={toolActivity.connection}
+              loading={repository.inventory.loading || toolActivity.loading}
+              error={toolActivity.error}
+            />
+          </CodeBrowser>
         )}
         {tab === "history" && (
           <HistoryView project={project} target={repository.target} />
@@ -258,6 +295,7 @@ export function RepositoryPage({
               }}
               onLocalReview={() => changeTab("pulls")}
               onCode={(id) => {
+                setFactory(false);
                 setRequestedWorktree(id);
                 repository.inventory.refresh();
                 changeTab("code");

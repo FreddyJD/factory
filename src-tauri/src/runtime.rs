@@ -241,7 +241,7 @@ impl Session {
         }
         drop(h);
         let id = self.task.lock().await.id.clone();
-        self.emit(&id,"tool",json!({"callId":call.id,"name":call.name,"input":input,"status":status,"output":output}));
+        self.emit(&id,"tool",json!({"messageId":message,"callId":call.id,"name":call.name,"input":input,"status":status,"output":output}));
     }
     async fn ask(&self, args: Value, cancel: CancellationToken) -> Result<Value> {
         let id = uuid::Uuid::new_v4().to_string();
@@ -2452,12 +2452,31 @@ esac
         );
         assert!(!data.join("interactions").join(&task.id).exists());
         let mut activity = Vec::new();
+        let mut tool_events = Vec::new();
         while let Ok(event) = events.try_recv() {
             assert_ne!(event["event"]["type"], "permission");
             assert_ne!(event["event"]["properties"]["status"], "needs-you");
+            if event["event"]["type"] == "tool" {
+                tool_events.push(event.clone());
+            }
             if event["event"]["type"] == "file-activity" {
                 activity.push(event);
             }
+        }
+        assert!(!tool_events.is_empty());
+        for event in &tool_events {
+            assert_eq!(event["taskId"], task.id);
+            let properties = &event["event"]["properties"];
+            assert!(snapshot["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|message| {
+                    message["info"]["id"] == properties["messageId"]
+                        && message["parts"].as_array().unwrap().iter().any(|part| {
+                            part["id"] == properties["callId"] && part["tool"] == properties["name"]
+                        })
+                }));
         }
         assert!(!workspace.path.join("native.txt").exists());
         assert_eq!(activity.len(), 3);
