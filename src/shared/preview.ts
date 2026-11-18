@@ -144,6 +144,7 @@ export async function previewApi(
           };
     case "snapshot":
       return {
+        queued: [],
         task: tasks.find((task) => task.id === args.taskId),
         messages: [
           {
