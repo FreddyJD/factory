@@ -43,6 +43,8 @@ export interface Part {
   id: string;
   type: string;
   text?: string;
+  name?: string;
+  dataUrl?: string;
   tool?: string;
   state?: {
     status: string;
@@ -72,7 +74,7 @@ export interface ProviderCatalog {
         id: string;
         name: string;
         protocol?: "chat" | "responses" | "messages";
-        capabilities?: { toolcall?: boolean };
+        capabilities?: { toolcall?: boolean; vision?: boolean | null };
       }
     >;
   }[];
@@ -115,7 +117,11 @@ export function models(catalog: ProviderCatalog) {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export type TranscriptLine = { id: string; text: string } & (
+export type TranscriptLine = {
+  id: string;
+  text: string;
+  image?: { name: string; dataUrl: string };
+} & (
   | { kind: "user" | "assistant" | "error" }
   | {
       kind: "tool";
@@ -141,6 +147,13 @@ export function transcript(snapshot: Snapshot | null): TranscriptLine[] {
       });
     for (const [index, part] of message.parts.entries()) {
       const id = `${message.info.id}:${part.id ?? index}`;
+      if (part.type === "image" && part.dataUrl)
+        lines.push({
+          id,
+          kind: "user",
+          text: `[Image: ${part.name ?? "Attached image"}]`,
+          image: { name: part.name ?? "Attached image", dataUrl: part.dataUrl },
+        });
       if (part.type === "text" && part.text)
         lines.push({
           id,

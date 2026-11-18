@@ -28,6 +28,30 @@ const call: Part = {
   },
 };
 describe("tool conversation", () => {
+  it("keeps image previews in conversation order alongside tool calls", () => {
+    const dataUrl = "data:image/png;base64,cG5n";
+    render(
+      <IssueTranscript
+        lines={transcript(
+          snapshot([
+            { id: "before", type: "text", text: "Before image" },
+            { id: "image", type: "image", name: "screen.png", dataUrl },
+            call,
+            { id: "after", type: "text", text: "After image" },
+          ]),
+        )}
+      />,
+    );
+    const conversation = screen.getByRole("region", {
+      name: "Issue conversation",
+    });
+    const entries = Array.from(conversation.children);
+    expect(entries).toHaveLength(4);
+    expect(entries[0].textContent).toContain("Before image");
+    expect(entries[1].querySelector("img")?.getAttribute("src")).toBe(dataUrl);
+    expect(entries[2].tagName).toBe("DETAILS");
+    expect(entries[3].textContent).toContain("After image");
+  });
   it("retains structured input and empty output in text export", () => {
     const lines = transcript(
       snapshot([

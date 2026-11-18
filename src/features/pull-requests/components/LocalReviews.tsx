@@ -40,7 +40,13 @@ export function LocalReviews({
   );
   const fingerprint = details.value ? JSON.stringify(details.value) : "";
   useEffect(() => {
-    setConfirmation(null);
+    setConfirmation((current) =>
+      current?.taskId === selected &&
+      !details.error &&
+      JSON.stringify(current) === fingerprint
+        ? current
+        : null,
+    );
   }, [selected, fingerprint, details.error]);
   async function merge() {
     if (!confirmation || !selected || gate.current || details.error) return;

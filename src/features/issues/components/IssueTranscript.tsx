@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import type { TranscriptLine } from "../../../shared/api";
+import { ImageGallery } from "./ImageAttachments";
 import { Markdown } from "../../../shared/components/Markdown";
 
 function ToolCall({
@@ -113,7 +114,11 @@ export function IssueTranscript({ lines }: { lines: TranscriptLine[] }) {
                     ? "Error"
                     : "Factory"}
               </h4>
-              <Markdown text={line.text} />
+              {line.image ? (
+                <ImageGallery images={[line.image]} />
+              ) : (
+                <Markdown text={line.text} />
+              )}
             </article>
           ),
         )}
